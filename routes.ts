@@ -1,8 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { supabase, supabaseAuth } from "./supabase";
-import { engineerRegistrationSchema } from "./lib/schema";
-import { fromZodError } from "zod-validation-error";
+import { supabase, supabaseAuth } from "./supabase.js";
+import { engineerRegistrationSchema } from "./lib/schema.js";
 import fetch from "node-fetch"; // ✅ ensure available in package.json
 import axios from "axios";
 import { Buffer } from "buffer";
@@ -108,11 +107,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/engineers/signup", async (req, res) => {
     try {
       const validation = engineerRegistrationSchema.safeParse(req.body);
-      if (!validation.success) {
-        return res
-          .status(400)
-          .json({ error: fromZodError(validation.error).message });
-      }
+if (!validation.success) {
+  const errors = validation.error.flatten().fieldErrors;
+  return res.status(400).json({ error: errors });
+}
 
       const {
         email,

@@ -1,8 +1,9 @@
-import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import cors from "cors";
 import dotenv from "dotenv";
 dotenv.config();
+import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
+import { registerRoutes } from './routes.js';
+import { supabase } from './supabase.js'; 
 
 const app = express();
 app.use(express.json());

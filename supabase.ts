@@ -1,5 +1,10 @@
+import dotenv from "dotenv";
+dotenv.config(); // load env variables immediately, before using them
+
+
 import { createClient } from '@supabase/supabase-js';
 
+console.log('Supabase URL:', process.env.SUPABASE_URL);
 if (!process.env.SUPABASE_URL) {
   throw new Error('Missing environment variable: SUPABASE_URL');
 }
