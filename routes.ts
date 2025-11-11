@@ -1134,83 +1134,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      END JOB, UPLOAD IMAGE, TRIGGER WEBHOOK
   ============================*/
-  app.post("/api/end-job", async (req, res) => {
-    try {
-      const { job_id, engineer_id, image_data, products = [] } = req.body;
-      if (!job_id || !engineer_id)
-        return res
-          .status(400)
-          .json({ error: "job_id and engineer_id required" });
+app.post("/api/end-job", async (req, res) => {
+  try {
+    const { job_id, engineer_id, image_data, products = [] } = req.body;
+    if (!job_id || !engineer_id)
+      return res
+        .status(400)
+        .json({ error: "job_id and engineer_id required" });
 
-      const endTime = new Date().toISOString();
-      const { data: entries } = await supabase
-        .from("time_tracking")
-        .select("*")
-        .eq("job_id", job_id)
-        .eq("engineer_id", engineer_id)
-        .is("end_time", null)
-        .limit(1);
+    const endTime = new Date().toISOString();
 
-      if (!entries?.length)
-        return res.status(404).json({ error: "Active time entry not found" });
+    // Fetch active time entry
+    const { data: entries } = await supabase
+      .from("time_tracking")
+      .select("*")
+      .eq("job_id", job_id)
+      .eq("engineer_id", engineer_id)
+      .is("end_time", null)
+      .limit(1);
 
-      const entry = entries[0];
+    if (!entries?.length)
+      return res.status(404).json({ error: "Active time entry not found" });
 
-      // Calculate total working time
-      const totalElapsed = Math.floor(
-        (Date.now() - new Date(entry.start_time).getTime()) / 1000,
-      );
-      const durationMinutes = Math.floor(totalElapsed / 60);
+    const entry = entries[0];
 
-      await supabase
-        .from("time_tracking")
-        .update({
-          end_time: endTime,
-          duration_minutes: durationMinutes,
-        })
-        .eq("id", entry.id);
+    // Calculate duration
+    const totalElapsed = Math.floor(
+      (Date.now() - new Date(entry.start_time).getTime()) / 1000
+    );
+    const durationMinutes = Math.floor(totalElapsed / 60);
 
-      let imageUrl = null;
-      if (image_data) {
-        const fileName = `job-${job_id}-${Date.now()}.jpg`;
-        const { error: upErr } = await supabase.storage
+    // End time tracking
+    await supabase
+      .from("time_tracking")
+      .update({ end_time: endTime, duration_minutes: durationMinutes })
+      .eq("id", entry.id);
+
+    // Upload image if provided
+    let imageUrl: string | null = null;
+    if (image_data) {
+      const fileName = `job-${job_id}-${Date.now()}.jpg`;
+      const { error: upErr } = await supabase.storage
+        .from("job-photos")
+        .upload(fileName, Buffer.from(image_data.split(",")[1], "base64"), {
+          contentType: "image/jpeg",
+        });
+
+      if (!upErr) {
+        const { data: pub } = supabase.storage
           .from("job-photos")
-          .upload(fileName, Buffer.from(image_data.split(",")[1], "base64"), {
-            contentType: "image/jpeg",
-          });
-        if (!upErr) {
-          const { data: pub } = supabase.storage
-            .from("job-photos")
-            .getPublicUrl(fileName);
-          imageUrl = pub.publicUrl;
-        }
+          .getPublicUrl(fileName);
+        imageUrl = pub.publicUrl;
       }
+    }
 
-      // Update job status to Completed
-      const { error: jobUpdateErr } = await supabase
-        .from("jobs")
-        .update({ job_status: "Completed" })
-        .eq("id", job_id);
+    // Update job status to Completed
+    const { error: jobUpdateErr } = await supabase
+      .from("jobs")
+      .update({ job_status: "Completed" })
+      .eq("id", job_id);
 
-      if (jobUpdateErr) {
-        console.error("Failed to update job status:", jobUpdateErr);
-        throw new Error("Failed to complete job");
-      }
+    if (jobUpdateErr) {
+      console.error("Failed to update job status:", jobUpdateErr);
+      throw new Error("Failed to complete job");
+    }
 
-      const { data: jobData } = await supabase
-        .from("jobs")
-        .select("customer_id")
-        .eq("id", job_id)
-        .single();
-      if (jobData) {
-        await supabase
-          .from("customers")
-          .update({ status: "completed" })
-          .eq("id", jobData.customer_id);
-      }
+    // Update customer status
+    const { data: jobData } = await supabase
+      .from("jobs")
+      .select("customer_id")
+      .eq("id", job_id)
+      .single();
 
-      if (process.env.N8N_WEBHOOK_URL) {
-        await fetch(process.env.N8N_WEBHOOK_URL, {
+    if (jobData) {
+      await supabase
+        .from("customers")
+        .update({ status: "completed" })
+        .eq("id", jobData.customer_id);
+    }
+
+    // Trigger n8n webhook (hardcoded URL)
+    try {
+      await fetch(
+        "https://keptcoldhvac.app.n8n.cloud/webhook/1004607b-2e7d-4d74-a939-f738e40d057f",
+        {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1221,20 +1228,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
             image_url: imageUrl,
             products_used: products,
           }),
-        }).catch((e) => console.error("Webhook error:", e));
-      }
-
-      res.json({
-        success: true,
-        duration_minutes: durationMinutes,
-        image_url: imageUrl,
-        products_count: products.length,
-      });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to end job" });
+        }
+      );
+      console.log("✅ Webhook triggered successfully");
+    } catch (webhookErr) {
+      console.error("Webhook error:", webhookErr);
     }
-  });
+
+    res.json({
+      success: true,
+      duration_minutes: durationMinutes,
+      image_url: imageUrl,
+      products_count: products.length,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to end job" });
+  }
+});
+
 
   /* ===========================
      UPLOAD MULTIPLE IMAGES TO IMAGEKIT
