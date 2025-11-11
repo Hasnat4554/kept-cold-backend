@@ -106,75 +106,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      ENGINEER REGISTRATION
   ============================*/
-  app.post("/api/engineers/signup", async (req, res) => {
-    try {
-      const validation = engineerRegistrationSchema.safeParse(req.body);
-if (!validation.success) {
-  const errors = validation.error.flatten().fieldErrors;
-  return res.status(400).json({ error: errors });
-}
 
-      const {
-        email,
-        password,
+  app.post("/api/engineers/signup", async (req, res) => {
+  try {
+    // 1️⃣ Validate request body
+    const validation = engineerRegistrationSchema.safeParse(req.body);
+    if (!validation.success) {
+      const errors = validation.error.flatten().fieldErrors;
+      return res.status(400).json({ error: errors });
+    }
+
+    const {
+      email,
+      password,
+      eng_name,
+      speciality,
+      area,
+      working_status,
+      work_start_time,
+      work_end_time,
+    } = validation.data;
+
+    const formatTimeWithTimezone = (time: string) => `${time}:00+05:00`;
+
+    // 2️⃣ Create Auth user using service role client (bypasses RLS)
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true, // optional: auto confirm
+    });
+
+    if (authError || !authData.user) {
+      return res
+        .status(400)
+        .json({ error: authError?.message || "Failed to create account" });
+    }
+
+    // 3️⃣ Insert engineer record using service role client
+    const { data: engineerData, error: engineerError } = await supabase
+      .from("engineers")
+      .insert({
+        id: authData.user.id,
         eng_name,
         speciality,
         area,
         working_status,
-        work_start_time,
-        work_end_time,
-      } = validation.data;
+        work_start_time: formatTimeWithTimezone(work_start_time),
+        work_end_time: formatTimeWithTimezone(work_end_time),
+      })
+      .select()
+      .single();
 
-      // Step 1: Create Auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
+    if (engineerError) {
+      console.error("Engineer insert error:", engineerError);
+      // Rollback: delete user if insert fails
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      return res.status(400).json({
+        error: engineerError.message,
+        details: engineerError.details,
+        hint: engineerError.hint,
+        code: engineerError.code,
       });
-      if (authError || !authData?.user) {
-        return res
-          .status(400)
-          .json({ error: authError?.message || "Failed to create account" });
-      }
-
-      const formatTimeWithTimezone = (time: string) => `${time}:00+05:00`;
-
-      // Step 2: Insert engineer record
-      const { data: engineerData, error: engineerError } = await supabase
-        .from("engineers")
-        .insert({
-          id: authData.user.id,
-          eng_name,
-          speciality,
-          area,
-          working_status,
-          work_start_time: formatTimeWithTimezone(work_start_time),
-          work_end_time: formatTimeWithTimezone(work_end_time),
-        })
-        .select()
-        .single();
-
-      if (engineerError) {
-        console.error("Engineer insert error:", engineerError);
-        await supabase.auth.admin.deleteUser(authData.user.id);
-        return res.status(400).json({
-          error: engineerError.message,
-          details: engineerError.details,
-          hint: engineerError.hint,
-          code: engineerError.code,
-        });
-      }
-
-      res.json({
-        success: true,
-        message: "Registration successful",
-        engineer: engineerData,
-      });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Unexpected registration error" });
     }
-  });
 
+    // 4️⃣ Success response
+    res.json({
+      success: true,
+      message: "Registration successful",
+      engineer: engineerData,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Unexpected registration error" });
+  }
+});
+ 
   /* ===========================
      ENGINEER LOGIN
   ============================*/
