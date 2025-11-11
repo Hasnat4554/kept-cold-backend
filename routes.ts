@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+import path from "path";
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { supabase, supabaseAuth } from "./supabase.js";
@@ -9,8 +12,11 @@ import ImageKit from "imagekit";
 import multer from "multer";
 
 // Initialize ImageKit
+console.log('Supabase URL:', process.env.IMAGEKIT_URL_ENDPOINT);
+console.log('Supabase URL:', process.env.IMAGEKIT_PUBLIC_KEEY);
+console.log('Supabase URL:', process.env.IMAGEKIT_PRIVATE_KEY);
 const imagekit = new ImageKit({
-  publicKey: process.env.IMAGEKIT_PUBLIC_KEY || "",
+  publicKey: process.env.IMAGEKIT_PUBLIC_KEEY || "",
   privateKey: process.env.IMAGEKIT_PRIVATE_KEY || "",
   urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT || "",
 });
@@ -381,7 +387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Missing address/postcode" });
 
       const query = postcode ? `${address}, ${postcode}, UK` : `${address}, UK`;
-      const apiKey = process.env.GOOGLE_API_KEY;
+      const apiKey = process.env.VITE_GOOGLE_MAPS_API_KEY;
       const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
         query,
       )}&key=${apiKey}`;
@@ -1233,8 +1239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      UPLOAD MULTIPLE IMAGES TO IMAGEKIT
   ============================*/
-  app.post(
-    "/api/upload-images-imagekit",
+  app.post("/api/upload-images-imagekit",
     upload.array("images", 10),
     async (req, res) => {
       try {
