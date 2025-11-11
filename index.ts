@@ -4,16 +4,24 @@ import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { registerRoutes } from './routes.js';
 import { supabase } from './supabase.js'; 
-
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+
+// Increase JSON & URL-encoded payload limits
+app.use(express.json({ limit: "5mb" })); // or higher if needed
+app.use(express.urlencoded({ limit: "5mb", extended: true }));
+
 app.set('etag', false);
+
 app.use(cors({
   origin: process.env.FRONTEND_DOMAIN_URL, // allow your Vite dev server
   credentials: true, // allow cookies/auth headers
 }));
-// Simple API logger
+
+// Optional: Simple API logger
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
 
 app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store'); // prevents browser caching
