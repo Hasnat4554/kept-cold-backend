@@ -50,6 +50,8 @@ async function requireAdminAuth(
       return;
     }
 
+
+
     // Extract token
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
@@ -74,7 +76,7 @@ async function requireAdminAuth(
       .eq("user_id", user.id)
       .eq("role", "admin")
       .single();
-
+  
     if (roleError || !roleData) {
       res.status(403).json({
         error: "Forbidden",
@@ -415,25 +417,14 @@ if (!validation.success) {
         business_name,
         system_details,
       } = req.body;
-      console.log("ASSIGN JOB BODY:", req.body);
 
       // ✅ Step 1: Fetch customer record to get schedule_time and Opening_Hours if not provided
-      console.log("Fetching from customers where id =", Number(customer_id));
 
       const { data: customer, error: custFetchErr } = await supabase
         .from("customers")
         .select("id, scheduled_time, Opening_Hours, status")
         .eq("id", Number(customer_id))
         .maybeSingle();
-
-      console.log("Fetched result:", customer, custFetchErr);
-
-      console.log(
-        "DEBUG: Looking up customer_id =",
-        customer_id,
-        "Type:",
-        typeof customer_id,
-      );
 
       if (custFetchErr) {
         console.error("Supabase fetch error:", custFetchErr);
@@ -555,7 +546,6 @@ if (!validation.success) {
     async (req: AdminRequest, res) => {
       try {
         const customer_id = Number(req.params.job_id); // ensure numeric
-        console.log("Deleting all jobs for customer_id:", customer_id);
 
         // Step 1: Fetch jobs linked to this customer
         const { data: jobs, error: jobFetchErr } = await supabase
@@ -564,10 +554,8 @@ if (!validation.success) {
           .eq("customer_id", customer_id);
 
         if (jobFetchErr) throw jobFetchErr;
-        console.log("Fetched jobs:", jobs);
 
         const jobIds = jobs.map((j) => j.id);
-        console.log("Jobs to delete:", jobIds);
 
         // Step 2: Delete time_tracking linked to those jobs
         if (jobIds.length > 0) {
@@ -772,7 +760,6 @@ if (!validation.success) {
 
     try {
       const response = await axios.get(url);
-      console.log("Google API full response data:", JSON.stringify(response.data, null, 2));
       
       if (!response.data || !response.data.rows || response.data.rows.length === 0) {
         console.error("Google API returned invalid data structure");
@@ -780,15 +767,12 @@ if (!validation.success) {
       }
 
       const element = response.data.rows[0].elements[0];
-      console.log("Element data:", JSON.stringify(element, null, 2));
 
       if (element.status === "OK" && element.distance && element.distance.value !== undefined) {
         // Distance in meters
-        console.log(`✅ Distance calculated: ${element.distance.value}m (${(element.distance.value / 1000).toFixed(2)}km)`);
         return element.distance.value;
       } else if (element.status === "ZERO_RESULTS") {
         // When origin and destination are the same or very close
-        console.log("✅ Engineer is at the exact location (ZERO_RESULTS) - allowing job start");
         return 0; // Return 0 distance (within 1km limit)
       } else {
         console.error("Google API element status:", element.status);
@@ -845,7 +829,6 @@ if (!validation.success) {
       if (jobStatusError) {
         // PGRST116 = no rows returned (job was deleted) - treat as no active job
         if (jobStatusError.code === 'PGRST116') {
-          console.log(`ℹ️ Job ${activeEntry.job_id} not found in database - treating as no active job`);
           return res.status(404).json({ message: "No active job found" });
         }
         // For other errors (network, auth, etc.), return 500 but log for monitoring
@@ -857,7 +840,6 @@ if (!validation.success) {
       
       // Don't return active job if it's in quote workflow (waiting for approval or already approved)
       if (jobStatus === 'quoted' || jobStatus === 'approved') {
-        console.log(`⚠️ Job ${activeEntry.job_id} has status "${jobStatus}" - not restoring timer`);
         return res.status(404).json({ message: "No active job found" });
       }
 
@@ -876,7 +858,6 @@ if (!validation.success) {
     try {
       const { job_id, engineer_id, engineer_latitude, engineer_longitude } =
         req.body;
-      console.log("Start job request:", req.body);
       if (!job_id || !engineer_id)
         return res
           .status(400)
@@ -911,7 +892,6 @@ if (!validation.success) {
         .eq("id", jobData.customer_id)
         .single();
 
-      console.log("Customer data:", customerData);
       if (!customerData) {
         return res.status(404).json({ error: "Customer not found" });
       }
