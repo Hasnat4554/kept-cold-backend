@@ -1682,6 +1682,11 @@ app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) =
       }
     },
   );
+  
+  ///////////////////////////=====================================serever is runnning check api 
+app.get('/health', (req, res) => {
+  res.send('Server is running');
+});
 
   /* ===========================
      ENGINEER QUOTES - READ ONLY (AUTHENTICATED)
