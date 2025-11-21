@@ -4,17 +4,13 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { supabase, supabaseAuth } from "./supabase.js";
-import { engineerRegistrationSchema } from "./lib/schema.js";
+import { engineerRegistrationSchema, jobs } from "./lib/schema.js";
 import fetch from "node-fetch"; // ✅ ensure available in package.json
 import axios from "axios";
-import { Buffer } from "buffer";
 import ImageKit from "imagekit";
 import multer from "multer";
 
-// Initialize ImageKit
-console.log('Supabase URL:', process.env.IMAGEKIT_URL_ENDPOINT);
-console.log('Supabase URL:', process.env.IMAGEKIT_PUBLIC_KEEY);
-console.log('Supabase URL:', process.env.IMAGEKIT_PRIVATE_KEY);
+
 const imagekit = new ImageKit({
   publicKey: process.env.IMAGEKIT_PUBLIC_KEEY || "",
   privateKey: process.env.IMAGEKIT_PRIVATE_KEY || "",
@@ -39,7 +35,7 @@ interface AdminRequest extends Request {
 /* ===========================
    ADMIN AUTHENTICATION MIDDLEWARE
 ============================*/
-async function requireAdminAuth(
+export async function requireAdminAuth(
   req: AdminRequest,
   res: Response,
   next: NextFunction,
@@ -55,8 +51,6 @@ async function requireAdminAuth(
       });
       return;
     }
-
-
 
     // Extract token
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
@@ -82,7 +76,8 @@ async function requireAdminAuth(
       .eq("user_id", user.id)
       .eq("role", "admin")
       .single();
-  
+
+
     if (roleError || !roleData) {
       res.status(403).json({
         error: "Forbidden",
@@ -114,79 +109,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ============================*/
 
   app.post("/api/engineers/signup", async (req, res) => {
-  try {
-    // 1️⃣ Validate request body
-    const validation = engineerRegistrationSchema.safeParse(req.body);
-    if (!validation.success) {
-      const errors = validation.error.flatten().fieldErrors;
-      return res.status(400).json({ error: errors });
-    }
+    try {
+      // 1️⃣ Validate request body
+      const validation = engineerRegistrationSchema.safeParse(req.body);
+      if (!validation.success) {
+        const errors = validation.error.flatten().fieldErrors;
+        return res.status(400).json({ error: errors });
+      }
 
-    const {
-      email,
-      password,
-      eng_name,
-      speciality,
-      area,
-      working_status,
-      work_start_time,
-      work_end_time,
-    } = validation.data;
-
-    const formatTimeWithTimezone = (time: string) => `${time}:00+05:00`;
-
-    // 2️⃣ Create Auth user using service role client (bypasses RLS)
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true, // optional: auto confirm
-    });
-
-    if (authError || !authData.user) {
-      return res
-        .status(400)
-        .json({ error: authError?.message || "Failed to create account" });
-    }
-
-    // 3️⃣ Insert engineer record using service role client
-    const { data: engineerData, error: engineerError } = await supabase
-      .from("engineers")
-      .insert({
-        id: authData.user.id,
+      const {
+        email,
+        password,
         eng_name,
         speciality,
         area,
         working_status,
-        work_start_time: formatTimeWithTimezone(work_start_time),
-        work_end_time: formatTimeWithTimezone(work_end_time),
-      })
-      .select()
-      .single();
+        work_start_time,
+        work_end_time,
+      } = validation.data;
 
-    if (engineerError) {
-      console.error("Engineer insert error:", engineerError);
-      // Rollback: delete user if insert fails
-      await supabase.auth.admin.deleteUser(authData.user.id);
-      return res.status(400).json({
-        error: engineerError.message,
-        details: engineerError.details,
-        hint: engineerError.hint,
-        code: engineerError.code,
+      const formatTimeWithTimezone = (time: string) => `${time}:00+05:00`;
+
+      // 2️⃣ Create Auth user using service role client (bypasses RLS)
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true, // optional: auto confirm
       });
-    }
 
-    // 4️⃣ Success response
-    res.json({
-      success: true,
-      message: "Registration successful",
-      engineer: engineerData,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Unexpected registration error" });
-  }
-});
- 
+      if (authError || !authData.user) {
+        return res
+          .status(400)
+          .json({ error: authError?.message || "Failed to create account" });
+      }
+
+      // 3️⃣ Insert engineer record using service role client
+      const { data: engineerData, error: engineerError } = await supabase
+        .from("engineers")
+        .insert({
+          id: authData.user.id,
+          eng_name,
+          speciality,
+          area,
+          working_status,
+          work_start_time: formatTimeWithTimezone(work_start_time),
+          work_end_time: formatTimeWithTimezone(work_end_time),
+        })
+        .select()
+        .single();
+
+      if (engineerError) {
+        console.error("Engineer insert error:", engineerError);
+        // Rollback: delete user if insert fails
+        await supabase.auth.admin.deleteUser(authData.user.id);
+        return res.status(400).json({
+          error: engineerError.message,
+          details: engineerError.details,
+          hint: engineerError.hint,
+          code: engineerError.code,
+        });
+      }
+
+      // 4️⃣ Success response
+      res.json({
+        success: true,
+        message: "Registration successful",
+        engineer: engineerData,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Unexpected registration error" });
+    }
+  });
+
   /* ===========================
      ENGINEER LOGIN
   ============================*/
@@ -204,7 +199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           password,
         });
       if (authError || !authData.user)
-        return res.json({ error: "Invalid login credentials" ,stauts: 401});
+        return res.json({ error: "Invalid login credentials", stauts: 401 });
 
       const { data: profile, error: profError } = await supabase
         .from("engineers")
@@ -256,9 +251,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "Failed to fetch jobs" });
       }
 
-      // Join customers with jobs data - SHOW ALL CUSTOMERS even if no job exists
+      // ✅ Fetch time tracking data
+      const { data: timeTracking, error: timeErr } = await supabase
+        .from("time_tracking")
+        .select("job_id, duration_minutes, accumulated_minutes")
+        .eq("is_paused", false,);
+
+      if (timeErr) {
+        console.error("Error fetching time tracking:", timeErr);
+      }
+
+      // Join customers with jobs data and time tracking
       const jobsWithCustomers = (customers || []).map((customer) => {
         const job = (jobs || []).find((j) => j.customer_id === customer.id);
+
+        // ✅ Find time tracking for this job
+        const timeData = job?.id
+          ? (timeTracking || []).find((t) => t.job_id === job.id)
+          : null;
+
+        // ✅ Calculate formatted duration
+        const durationMinutes = timeData?.duration_minutes || 0;
+        const hours = Math.floor(durationMinutes / 60);
+        const minutes = durationMinutes % 60;
+        const durationFormatted = durationMinutes > 0
+          ? (hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`)
+          : null;
 
         // Use customer as primary, with job data overlaid
         return {
@@ -270,6 +288,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           engineer_uuid: job?.engineer_uuid || null,
           engineer_name: job?.engineer_name || null,
           scheduled_time: job?.scheduled_time || customer.scheduled_time,
+          engineerUploadImages: job?.image_urls || [],
+          // ✅ Add time tracking fields
+          duration_minutes: durationMinutes,
+          duration_formatted: durationFormatted,
+          accumulated_minutes: timeData?.accumulated_minutes || 0,
         };
       });
 
@@ -280,7 +303,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
         return res.json(filtered);
       }
-
       res.json(jobsWithCustomers);
     } catch (error) {
       console.error("Error fetching engineer jobs:", error);
@@ -501,25 +523,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requireAdminAuth,
     async (req: AdminRequest, res) => {
       try {
-        const { engineer_id } = req.query;
+        const {
+          engineer_id,
+          page = '1',
+          limit = '10',
+          search = '',
+          status = '',
+          dateFrom = '',
+          excludeStatus = '', // New parameter
+          dateTo = ''
+        } = req.query;
 
-        const { data: customers, error: custErr } = await supabase
+        const pageNum = parseInt(page as string);
+        const limitNum = parseInt(limit as string);
+        const offset = (pageNum - 1) * limitNum;
+
+        // Build the base query
+        let customersQuery = supabase
           .from("customers")
-          .select("*")
-          .order("scheduled_time", { ascending: true });
+          .select("*", { count: 'exact' });
+
+        // Apply search filter if provided
+        if (search) {
+          customersQuery = customersQuery.or(
+            `Business_Name.ilike.%${search}%,Site_Location.ilike.%${search}%,id.eq.${isNaN(Number(search)) ? 0 : search}`
+          );
+        }
+
+        // Apply status filter if provided
+        if (status) {
+          customersQuery = customersQuery.eq('status', status);
+        }
+
+        if (excludeStatus) {
+          const statusesToExclude = excludeStatus.split(',');
+          statusesToExclude.forEach(s => {
+            customersQuery = customersQuery.neq('status', s.trim());
+          });
+        }
+
+        // Apply date filters if provided
+        if (dateFrom || dateTo) {
+          if (dateFrom) {
+            customersQuery = customersQuery.gte('created_at', dateFrom);
+          }
+          if (dateTo) {
+            customersQuery = customersQuery.lte('created_at', dateTo);
+          }
+        }
+
+        // Get total count first
+        const { count: totalCount } = await customersQuery;
+
+        // Now get paginated results
+        const { data: customers, error: custErr } = await customersQuery
+          .order("scheduled_time", { ascending: true })
+          .range(offset, offset + limitNum - 1);
+
         if (custErr) throw custErr;
 
+        // Fetch all jobs and time tracking data
         const { data: jobs, error: jobsErr } = await supabase
           .from("jobs")
           .select("*");
         if (jobsErr) throw jobsErr;
 
-        // Fetch time tracking data for completion times
         const { data: timeTracking, error: timeErr } = await supabase
           .from("time_tracking")
           .select("job_id, end_time");
         if (timeErr) console.error("Error fetching time tracking:", timeErr);
 
+        // Map customers to jobs
         const jobsWithCustomers = customers.map((c) => {
           const assigned = jobs?.find((j) => j.customer_id === c.id);
           const timeEntry = timeTracking?.find(
@@ -527,7 +601,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
           return {
             ...c,
-            created_at: assigned?.created_at || c.created_at, // Use job created_at if available
+            created_at: assigned?.created_at || c.created_at,
             job_id: assigned?.id || null,
             job_status: assigned?.job_status || "new",
             completion_time: timeEntry?.end_time || null,
@@ -536,11 +610,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         });
 
+        // Filter by engineer if specified
         const result = engineer_id
           ? jobsWithCustomers.filter((j) => j.engineer_uuid === engineer_id)
           : jobsWithCustomers;
 
-        res.json(result);
+        // Calculate pagination metadata
+        const totalPages = Math.ceil((totalCount || 0) / limitNum);
+
+        console.log(`Fetched ${result.length} jobs (Page ${pageNum} of ${totalPages})`);
+        res.json({
+          data: result,
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total: totalCount || 0,
+            totalPages,
+            hasNextPage: pageNum < totalPages,
+            hasPreviousPage: pageNum > 1
+          }
+        });
       } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch jobs" });
@@ -751,7 +840,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const startTime = `${startHour.toString().padStart(2, "0")}:${startMin.toString().padStart(2, "0")}`;
         const endTime = `${endHour.toString().padStart(2, "0")}:${endMin.toString().padStart(2, "0")}`;
 
-        return  currentTime >= startTime && currentTime <= endTime;
+        return currentTime >= startTime && currentTime <= endTime;
       }
 
       return true; // If can't parse, allow job to start
@@ -772,7 +861,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     try {
       const response = await axios.get(url);
-      
+
       if (!response.data || !response.data.rows || response.data.rows.length === 0) {
         console.error("Google API returned invalid data structure");
         return null;
@@ -801,64 +890,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      GET ACTIVE JOB FOR ENGINEER (FOR STATE RESTORATION)
   ============================*/
+  /* ===========================
+     GET ACTIVE JOB - Check pause state and calculate current time
+  ============================*/
   app.get("/api/engineers/:engineerId/active-job", async (req, res) => {
     try {
       const { engineerId } = req.params;
 
-      // Find active time tracking entry (no end_time)
+      // Find active time tracking entry with new columns
       const { data: activeEntry, error } = await supabase
         .from("time_tracking")
-        .select("job_id, start_time, engineer_id")
+        .select("*")
         .eq("engineer_id", engineerId)
         .is("end_time", null)
         .order("start_time", { ascending: false })
         .limit(1)
         .single();
 
-      // Handle time tracking query errors properly
+      console.log('error in the error', error)
       if (error) {
-        // PGRST116 = no rows returned (no active timer) - this is expected
         if (error.code === 'PGRST116') {
+          console.log(`No active time tracking found for engineer ${engineerId}`);
           return res.status(404).json({ message: "No active job found" });
         }
-        // For other errors (network, auth, database issues), return 500
-        console.error(`❌ Database error fetching time tracking for engineer ${engineerId}:`, error);
-        return res.status(500).json({ error: "Database error fetching active job" });
+        console.error(`❌ Database error fetching time tracking:`, error);
+        return res.status(500).json({ error: "Database error" });
       }
 
       if (!activeEntry) {
+        console.log(`No active entry found for engineer ${engineerId}`);
         return res.status(404).json({ message: "No active job found" });
       }
 
-      // Check the job's status - don't restore timer for "Quoted" or "Approved" jobs
+      // Get job details
       const { data: jobData, error: jobStatusError } = await supabase
         .from("jobs")
-        .select("job_status")
+        .select("job_status, image_urls")
         .eq("id", activeEntry.job_id)
         .single();
 
-      // Handle job status lookup errors carefully
       if (jobStatusError) {
-        // PGRST116 = no rows returned (job was deleted) - treat as no active job
         if (jobStatusError.code === 'PGRST116') {
+          console.log(`Job ${activeEntry.job_id} not found`);
           return res.status(404).json({ message: "No active job found" });
         }
-        // For other errors (network, auth, etc.), return 500 but log for monitoring
-        console.error(`❌ Database error fetching job status for ${activeEntry.job_id}:`, jobStatusError);
-        return res.status(500).json({ error: "Database error fetching job status" });
+        console.error(`❌ Database error fetching job:`, jobStatusError);
+        return res.status(500).json({ error: "Database error" });
       }
 
       const jobStatus = jobData?.job_status?.toLowerCase() || '';
-      
-      // Don't return active job if it's in quote workflow (waiting for approval or already approved)
-      if (jobStatus === 'quoted' || jobStatus === 'approved') {
-        return res.status(404).json({ message: "No active job found" });
+      console.log(`Job ${activeEntry.job_id} status: ${jobStatus}, is_paused: ${activeEntry.is_paused}`);
+
+      // ✅ IMPORTANT FIX: Return the data even for quoted/approved jobs
+      // The timer is just paused, not ended, so we need this data
+
+      // Calculate current total time
+      let currentTotalMinutes = activeEntry.accumulated_minutes || 0;
+      if (!activeEntry.is_paused) {
+        const lastActionTime = activeEntry.pause_start_time || activeEntry.start_time;
+        const currentSegment = Math.floor(
+          (Date.now() - new Date(lastActionTime).getTime()) / 1000 / 60
+        );
+        currentTotalMinutes += currentSegment;
       }
 
-      res.json(activeEntry);
+      // ✅ ALWAYS return the timer data if it exists (even for quoted/approved)
+      res.json({
+        job_id: activeEntry.job_id,
+        start_time: activeEntry.start_time,
+        engineer_id: activeEntry.engineer_id,
+        accumulated_minutes: activeEntry.accumulated_minutes,
+        is_paused: activeEntry.is_paused,
+        pause_start_time: activeEntry.pause_start_time,
+        current_total_minutes: currentTotalMinutes,
+        job_status: jobData.job_status,
+        image_urls: jobData.image_urls
+      });
+
     } catch (err) {
       console.error("❌ Unexpected error in /active-job endpoint:", err);
-      // Return 500 for unexpected errors so they can be monitored
       return res.status(500).json({ error: "Failed to fetch active job" });
     }
   });
@@ -866,38 +976,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      START JOB TIMER WITH LOCATION & TIME VERIFICATION
   ============================*/
+  /* ===========================
+     START JOB - Create single time tracking row with new columns
+  ============================*/
   app.post("/api/start-job", async (req, res) => {
     try {
-      const { job_id, engineer_id, engineer_latitude, engineer_longitude } =
-        req.body;
-      if (!job_id || !engineer_id)
-        return res
-          .status(400)
-          .json({ error: "job_id and engineer_id required" });
+      const { job_id, engineer_id, engineer_latitude, engineer_longitude } = req.body;
 
-      // Get job details including location coordinates and status
+      if (!job_id || !engineer_id) {
+        return res.status(400).json({ error: "job_id and engineer_id required" });
+      }
+
+      // Check if time tracking already exists for this job
+      const { data: existingEntry } = await supabase
+        .from("time_tracking")
+        .select("*")
+        .eq("job_id", job_id)
+        .eq("engineer_id", engineer_id)
+        .is("end_time", null)
+        .single();
+
+      if (existingEntry) {
+        // If paused, resume it
+        if (existingEntry.is_paused) {
+          const resumeTime = new Date().toISOString();
+          await supabase
+            .from("time_tracking")
+            .update({
+              is_paused: false,
+              pause_start_time: resumeTime
+            })
+            .eq("id", existingEntry.id);
+
+          return res.json({
+            success: true,
+            message: "Job resumed",
+            time_entry: existingEntry
+          });
+        }
+        return res.status(400).json({
+          error: "Time tracking already active for this job"
+        });
+      }
+
+      // Get job details for validation
       const { data: jobData } = await supabase
         .from("jobs")
-        .select(
-          "customer_id, customer_latitude, customer_longitude, site_location, job_status",
-        )
+        .select("customer_id, customer_latitude, customer_longitude, site_location, job_status")
         .eq("id", job_id)
         .single();
-      console.log("Job data:", jobData);
 
       if (!jobData) {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      // Prevent starting jobs with "Quoted" status (server-side validation)
       if (jobData.job_status?.toLowerCase() === "quoted") {
         return res.status(403).json({
-          error:
-            "Cannot start job with Quoted status. Please wait for admin approval.",
+          error: "Cannot start job with Quoted status. Please wait for admin approval."
         });
       }
 
-      // Get customer details for Opening_Hours
+      // Get customer details
       const { data: customerData } = await supabase
         .from("customers")
         .select("Opening_Hours")
@@ -908,7 +1047,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Customer not found" });
       }
 
-      // Combine job location with customer opening hours
       const locationData = {
         latitude: jobData.customer_latitude,
         longitude: jobData.customer_longitude,
@@ -916,51 +1054,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         Opening_Hours: customerData.Opening_Hours,
       };
 
-      console.log("Location data:", locationData);
-      // STRICT LOCATION VERIFICATION - MANDATORY!
+      // Location verification
       if (!engineer_latitude || !engineer_longitude) {
         return res.status(400).json({
           error: "Location required",
-          message:
-            "⚠️ Please enable location services to start the job. Location verification is mandatory.",
+          message: "⚠️ Please enable location services to start the job. Location verification is mandatory."
         });
       }
 
       if (!locationData.latitude || !locationData.longitude) {
         return res.status(400).json({
           error: "Customer location missing",
-          message: `⚠️ Customer location not available for ${locationData.Site_Location}. Please contact admin to geocode this address.`,
+          message: `⚠️ Customer location not available for ${locationData.Site_Location}. Please contact admin to geocode this address.`
         });
       }
 
-      // Calculate distance - MUST be within 1000 meters (1km)
-      let distance: number | null = null;
-
-      // Short-circuit: If coordinates are virtually identical, consider engineer at location
+      // Distance calculation (keeping your existing logic)
+      let distance = null;
       const latDiff = Math.abs(engineer_latitude - Number(locationData.latitude));
       const lonDiff = Math.abs(engineer_longitude - Number(locationData.longitude));
-      
+
       if (latDiff < 0.0001 && lonDiff < 0.0001) {
-        // Coordinates are essentially the same (within ~11 meters)
-        console.log("✅ Engineer coordinates match job location - skipping Google API call");
         distance = 0;
       } else {
-        // Use Google Distance Matrix API for driving distance
         distance = await getDrivingDistance(
           engineer_latitude,
           engineer_longitude,
           Number(locationData.latitude),
-          Number(locationData.longitude),
+          Number(locationData.longitude)
         );
 
-        // Fallback to Haversine if Google API fails
         if (distance === null) {
-          console.log("⚠️ Google API returned null, falling back to Haversine distance");
           distance = calculateDistance(
             engineer_latitude,
             engineer_longitude,
             Number(locationData.latitude),
-            Number(locationData.longitude),
+            Number(locationData.longitude)
           );
         }
       }
@@ -968,51 +1097,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (distance === null) {
         return res.status(400).json({
           error: "Distance check failed",
-          message: "⚠️ Unable to verify distance. Please try again.",
+          message: "⚠️ Unable to verify distance. Please try again."
         });
       }
-
-      console.log(
-        `Location check: Engineer at (${engineer_latitude}, ${engineer_longitude}), Customer at (${locationData.latitude}, ${locationData.longitude}), Distance: ${Math.round(distance)}m`,
-      );
 
       if (distance > 1000) {
         return res.status(400).json({
           error: "Location verification failed",
-          message: `⚠️ You must be within 1km of the job site to start. You're currently ${(distance / 1000).toFixed(2)}km away. Please move closer to the location.`,
+          message: `⚠️ You must be within 1km of the job site to start. You're currently ${(distance / 1000).toFixed(2)}km away.`,
           distance: Math.round(distance),
-          distanceKm: (distance / 1000).toFixed(2),
+          distanceKm: (distance / 1000).toFixed(2)
         });
       }
 
-      // Verify time window
+      // Time verification
       if (locationData.Opening_Hours) {
         const withinHours = isWithinOpeningHours(locationData.Opening_Hours);
         if (!withinHours) {
           return res.status(400).json({
             error: "Time verification failed",
             message: `This job should be started during customer's opening hours: ${locationData.Opening_Hours}`,
-            opening_hours: locationData.Opening_Hours,
+            opening_hours: locationData.Opening_Hours
           });
         }
       }
 
       const startTime = new Date().toISOString();
+
+      // Create single time tracking row with NEW COLUMNS
       const { data, error } = await supabase
         .from("time_tracking")
         .insert({
           job_id,
           engineer_id,
           start_time: startTime,
+          accumulated_minutes: 0,        // NEW COLUMN
+          is_paused: false,              // NEW COLUMN
+          pause_start_time: startTime    // NEW COLUMN
         })
         .select()
         .single();
+
       if (error) throw error;
 
       await supabase
         .from("jobs")
         .update({ job_status: "In Progress" })
         .eq("id", job_id);
+
       res.json({ success: true, time_entry: data });
     } catch (err) {
       console.error(err);
@@ -1023,59 +1155,141 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      PAUSE JOB TIMER (Frontend-only tracking)
   ============================*/
+  /* ===========================
+     PAUSE JOB - Actually pause and accumulate time
+  ============================*/
   app.post("/api/pause-job", async (req, res) => {
     try {
       const { job_id, engineer_id } = req.body;
-      if (!job_id || !engineer_id)
-        return res
-          .status(400)
-          .json({ error: "job_id and engineer_id required" });
 
-      // Verify active job exists
-      const { data: entries } = await supabase
+      if (!job_id || !engineer_id) {
+        return res.status(400).json({ error: "job_id and engineer_id required" });
+      }
+
+      // Get the single row
+      const { data: entry } = await supabase
         .from("time_tracking")
         .select("*")
         .eq("job_id", job_id)
         .eq("engineer_id", engineer_id)
         .is("end_time", null)
-        .limit(1);
+        .single();
 
-      if (!entries?.length)
-        return res.status(404).json({ error: "Active time entry not found" });
+      if (!entry) {
+        return res.status(404).json({ error: "No active time entry found" });
+      }
 
+      if (entry.is_paused) {
+        return res.status(400).json({
+          error: "Job is already paused",
+          accumulated_minutes: entry.accumulated_minutes
+        });
+      }
+
+      // Calculate time since last action (start or resume)
+      const lastActionTime = entry.pause_start_time || entry.start_time;
+      const minutesSinceLastAction = Math.floor(
+        (Date.now() - new Date(lastActionTime).getTime()) / 1000 / 60
+      );
+
+      const newAccumulatedMinutes = (entry.accumulated_minutes || 0) + minutesSinceLastAction;
       const pauseTime = new Date().toISOString();
-      res.json({ success: true, paused_at: pauseTime });
+
+      // Update the SAME row
+      const { error: updateError } = await supabase
+        .from("time_tracking")
+        .update({
+          accumulated_minutes: newAccumulatedMinutes,
+          is_paused: true,
+          pause_start_time: pauseTime
+        })
+        .eq("id", entry.id);
+
+      if (updateError) throw updateError;
+
+
+      res.json({
+        success: true,
+        paused_at: pauseTime,
+        session_minutes: minutesSinceLastAction,
+        total_minutes: newAccumulatedMinutes
+      });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Failed to pause job" });
     }
   });
-
   /* ===========================
      RESUME JOB TIMER (Frontend-only tracking)
+  ============================*/
+  /* ===========================
+     RESUME JOB - Mark as not paused and update pause_start_time
   ============================*/
   app.post("/api/resume-job", async (req, res) => {
     try {
       const { job_id, engineer_id } = req.body;
-      if (!job_id || !engineer_id)
-        return res
-          .status(400)
-          .json({ error: "job_id and engineer_id required" });
 
-      // Verify active job exists
-      const { data: entries } = await supabase
+      if (!job_id || !engineer_id) {
+        return res.status(400).json({ error: "job_id and engineer_id required" });
+      }
+
+      // Get the single row
+      const { data: entry } = await supabase
         .from("time_tracking")
         .select("*")
         .eq("job_id", job_id)
         .eq("engineer_id", engineer_id)
         .is("end_time", null)
-        .limit(1);
+        .single();
 
-      if (!entries?.length)
-        return res.status(404).json({ error: "Active time entry not found" });
+      if (!entry) {
+        return res.status(404).json({ error: "No active time entry found" });
+      }
+
+      if (!entry.is_paused) {
+        return res.status(400).json({
+          error: "Job is not paused",
+          accumulated_minutes: entry.accumulated_minutes
+        });
+      }
 
       const resumeTime = new Date().toISOString();
-      res.json({ success: true, resumed_at: resumeTime });
+
+      // Update the SAME row - just mark as resumed
+      const { error: updateError } = await supabase
+        .from("time_tracking")
+        .update({
+          is_paused: false,
+          pause_start_time: resumeTime  // Track when we resumed for next calculation
+        })
+        .eq("id", entry.id);
+
+      if (updateError) throw updateError;
+
+
+
+      const { data: jobData } = await supabase
+        .from("jobs")
+        .select("job_status")
+        .eq("id", job_id)
+        .single();
+
+      // ✅ If status was "Approved", change it to "Working" to indicate post-quote work
+      if (jobData?.job_status?.toLowerCase() === 'approved') {
+        await supabase
+          .from("jobs")
+          .update({ job_status: "Working" })  // New status!
+          .eq("id", job_id);
+
+      }
+
+      res.json({
+        success: true,
+        resumed_at: resumeTime,
+        accumulated_minutes: entry.accumulated_minutes,
+        job_status: jobData?.job_status === 'Approved' ? 'Working' : jobData?.job_status
+
+      });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Failed to resume job" });
@@ -1134,119 +1348,149 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      END JOB, UPLOAD IMAGE, TRIGGER WEBHOOK
   ============================*/
-app.post("/api/end-job", async (req, res) => {
-  try {
-    const { job_id, engineer_id, image_data, products = [] } = req.body;
-    if (!job_id || !engineer_id)
-      return res
-        .status(400)
-        .json({ error: "job_id and engineer_id required" });
-
-    const endTime = new Date().toISOString();
-
-    // Fetch active time entry
-    const { data: entries } = await supabase
-      .from("time_tracking")
-      .select("*")
-      .eq("job_id", job_id)
-      .eq("engineer_id", engineer_id)
-      .is("end_time", null)
-      .limit(1);
-
-    if (!entries?.length)
-      return res.status(404).json({ error: "Active time entry not found" });
-
-    const entry = entries[0];
-
-    // Calculate duration
-    const totalElapsed = Math.floor(
-      (Date.now() - new Date(entry.start_time).getTime()) / 1000
-    );
-    const durationMinutes = Math.floor(totalElapsed / 60);
-
-    // End time tracking
-    await supabase
-      .from("time_tracking")
-      .update({ end_time: endTime, duration_minutes: durationMinutes })
-      .eq("id", entry.id);
-
-    // Upload image if provided
-    let imageUrl: string | null = null;
-    if (image_data) {
-      const fileName = `job-${job_id}-${Date.now()}.jpg`;
-      const { error: upErr } = await supabase.storage
-        .from("job-photos")
-        .upload(fileName, Buffer.from(image_data.split(",")[1], "base64"), {
-          contentType: "image/jpeg",
-        });
-
-      if (!upErr) {
-        const { data: pub } = supabase.storage
-          .from("job-photos")
-          .getPublicUrl(fileName);
-        imageUrl = pub.publicUrl;
-      }
-    }
-
-    // Update job status to Completed
-    const { error: jobUpdateErr } = await supabase
-      .from("jobs")
-      .update({ job_status: "Completed" })
-      .eq("id", job_id);
-
-    if (jobUpdateErr) {
-      console.error("Failed to update job status:", jobUpdateErr);
-      throw new Error("Failed to complete job");
-    }
-
-    // Update customer status
-    const { data: jobData } = await supabase
-      .from("jobs")
-      .select("customer_id")
-      .eq("id", job_id)
-      .single();
-
-    if (jobData) {
-      await supabase
-        .from("customers")
-        .update({ status: "completed" })
-        .eq("id", jobData.customer_id);
-    }
-
-    // Trigger n8n webhook (hardcoded URL)
+  /* ===========================
+     END JOB - Calculate final time with accumulated + current segment
+  ============================*/
+  app.post("/api/end-job", async (req, res) => {
     try {
-      await fetch(
-        "https://keptcoldhvac.app.n8n.cloud/webhook/1004607b-2e7d-4d74-a939-f738e40d057f",
-        {
+      const {
+        job_id,
+        engineer_id,
+        image_data,
+        products = [],
+        manual_duration_minutes = null,
+        time_adjustment_minutes = 0,
+        adjustment_reason = ""
+      } = req.body;
+
+
+      if (!job_id || !engineer_id) {
+        return res.status(400).json({ error: "job_id and engineer_id required" });
+      }
+
+      // Get the single time tracking row
+      const { data: entry } = await supabase
+        .from("time_tracking")
+        .select("*")
+        .eq("job_id", job_id)
+        .eq("engineer_id", engineer_id)
+        .is("end_time", null)
+        .single();
+
+      if (!entry) {
+        return res.status(404).json({ error: "No active time entry found" });
+      }
+
+      const endTime = new Date().toISOString();
+      let totalDurationMinutes;
+      let calculationMethod;
+      let finalAdjustmentReason = "";
+      let finalAdjustmentMinutes = 0;
+
+      if (manual_duration_minutes !== null && manual_duration_minutes >= 0) {
+        // Manual override
+        totalDurationMinutes = manual_duration_minutes;
+        calculationMethod = "manual_override";
+        finalAdjustmentReason = adjustment_reason || "Manual time entry by engineer";
+
+      } else {
+        // Calculate from accumulated + current segment if not paused
+        let finalMinutes = entry.accumulated_minutes || 0;
+
+        if (!entry.is_paused) {
+          // Add time since last resume/start
+          const lastActionTime = entry.pause_start_time || entry.start_time;
+          const currentSegment = Math.floor(
+            (Date.now() - new Date(lastActionTime).getTime()) / 1000 / 60
+          );
+          finalMinutes += currentSegment;
+        }
+
+        // Apply adjustment
+        if (time_adjustment_minutes !== 0) {
+          totalDurationMinutes = Math.max(0, finalMinutes + time_adjustment_minutes);
+          calculationMethod = "adjusted";
+          finalAdjustmentReason = adjustment_reason || `Time adjusted by ${time_adjustment_minutes} minutes`;
+          finalAdjustmentMinutes = time_adjustment_minutes;
+        } else {
+          totalDurationMinutes = finalMinutes;
+          calculationMethod = "automatic";
+        }
+
+      }
+
+      // Update the time tracking row with final data INCLUDING calculation method and reason
+      await supabase
+        .from("time_tracking")
+        .update({
+          end_time: endTime,
+          duration_minutes: totalDurationMinutes,
+          is_paused: false,
+          accumulated_minutes: totalDurationMinutes,
+          calculation_method: calculationMethod,
+          adjustment_reason: finalAdjustmentReason,
+          adjustment_minutes: finalAdjustmentMinutes
+        })
+        .eq("id", entry.id);
+
+      // Handle image (already HTTPS URL)
+      const imageUrl = image_data || null;
+
+      // Update job status
+      const { data: jobCheckData } = await supabase
+        .from("jobs")
+        .update({
+          job_status: "Completed",
+        })
+        .eq("id", job_id);
+
+      // Update customer status
+      const { data: jobData } = await supabase
+        .from("jobs")
+        .select("customer_id")
+        .eq("id", job_id)
+        .single();
+
+      if (jobData) {
+        await supabase
+          .from("customers")
+          .update({ status: "completed" })
+          .eq("id", jobData.customer_id);
+      }
+
+      // Send webhook with total time and calculation method
+      try {
+        await fetch("https://keptcoldhvac.app.n8n.cloud/webhook/end-job", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             job_id,
             engineer_id,
-            duration_minutes: durationMinutes,
+            duration_minutes: totalDurationMinutes,
+            calculation_method: calculationMethod,
+            adjustment_reason: finalAdjustmentReason,
             end_time: endTime,
             image_url: imageUrl,
-            products_used: products,
-          }),
-        }
-      );
-      console.log("✅ Webhook triggered successfully");
-    } catch (webhookErr) {
-      console.error("Webhook error:", webhookErr);
+            products_used: products
+          })
+        });
+      } catch (webhookErr) {
+        console.error("Webhook error:", webhookErr);
+      }
+
+      res.json({
+        success: true,
+        total_duration_minutes: totalDurationMinutes,
+        calculation_method: calculationMethod,
+        image_url: imageUrl,
+        products_count: products.length
+      });
+
+    } catch (err) {
+      console.error("❌ Error in end-job:", err);
+      res.status(500).json({ error: "Failed to end job" });
     }
-
-    res.json({
-      success: true,
-      duration_minutes: durationMinutes,
-      image_url: imageUrl,
-      products_count: products.length,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to end job" });
-  }
-});
-
+  });
 
   /* ===========================
      UPLOAD MULTIPLE IMAGES TO IMAGEKIT
@@ -1262,9 +1506,7 @@ app.post("/api/end-job", async (req, res) => {
           return res.status(400).json({ error: "No images provided" });
         }
 
-        console.log(
-          `Uploading ${files.length} images to ImageKit for job ${job_id}...`,
-        );
+
 
         const uploadedUrls: string[] = [];
 
@@ -1282,9 +1524,7 @@ app.post("/api/end-job", async (req, res) => {
           });
 
           uploadedUrls.push(result.url);
-          console.log(
-            `✅ Uploaded image ${i + 1}/${files.length}: ${result.url}`,
-          );
+
         }
 
         res.json({ success: true, urls: uploadedUrls });
@@ -1298,21 +1538,19 @@ app.post("/api/end-job", async (req, res) => {
   /* ===========================
      SUBMIT JOB QUOTE WITH IMAGES, PRODUCTS, NOTES
   ============================*/
+  /* ===========================
+     SUBMIT JOB QUOTE - Pause the job (don't end it)
+  ============================*/
   app.post("/api/submit-job-quote", async (req, res) => {
     try {
-      const { job_id, image_urls, product_names, notes, engineer_id } =
-        req.body;
+      const { job_id, image_urls, product_names, notes, engineer_id } = req.body;
 
       if (!job_id) {
         return res.status(400).json({ error: "Job ID is required" });
       }
 
-      console.log("Submitting quote for job:", job_id);
-      console.log("Image URLs:", image_urls);
-      console.log("Products:", product_names);
-      console.log("Notes:", notes);
 
-      // STEP 0: Check job status to prevent duplicate quote submissions
+      // Check current status
       const { data: existingJob } = await supabase
         .from("jobs")
         .select("job_status")
@@ -1321,119 +1559,85 @@ app.post("/api/end-job", async (req, res) => {
 
       const currentStatus = existingJob?.job_status?.toLowerCase() || '';
       if (currentStatus === 'quoted' || currentStatus === 'approved') {
-        console.log(`⚠️ Quote already submitted for job ${job_id} (status: ${currentStatus})`);
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: "Quote already submitted",
-          message: `This job already has status "${existingJob?.job_status}". Cannot submit duplicate quote.`
+          message: `This job already has status "${existingJob?.job_status}".`
         });
       }
 
-      // STEP 1: End the active time tracking session for this quote
-      const { data: timeEntry, error: timeQueryErr } = await supabase
+      // PAUSE the time tracking (don't end it!)
+      const { data: timeEntry } = await supabase
         .from("time_tracking")
         .select("*")
         .eq("job_id", job_id)
         .eq("engineer_id", engineer_id)
         .is("end_time", null)
-        .limit(1);
+        .single();
 
-      if (timeQueryErr) {
-        console.error("⚠️ Error fetching time tracking:", timeQueryErr);
-      }
-
-      let timeData = null;
-      if (timeEntry && timeEntry.length > 0) {
-        const entry = timeEntry[0];
-        const endTime = new Date().toISOString();
-        const startTime = new Date(entry.start_time);
-        const durationMinutes = Math.floor(
-          (new Date(endTime).getTime() - startTime.getTime()) / 60000
+      let pausedMinutes = 0;
+      if (timeEntry && !timeEntry.is_paused) {
+        // Calculate and accumulate current segment
+        const lastActionTime = timeEntry.pause_start_time || timeEntry.start_time;
+        const currentSegment = Math.floor(
+          (Date.now() - new Date(lastActionTime).getTime()) / 1000 / 60
         );
 
-        console.log(`⏱️ Ending time tracking for job ${job_id}: ${durationMinutes} minutes`);
+        pausedMinutes = (timeEntry.accumulated_minutes || 0) + currentSegment;
+        const pauseTime = new Date().toISOString();
 
-        // Update time tracking with end time
-        const { error: timeUpdateErr } = await supabase
+        // Pause the timer (keep row active for later resume)
+        await supabase
           .from("time_tracking")
           .update({
-            end_time: endTime,
-            duration_minutes: durationMinutes,
+            accumulated_minutes: pausedMinutes,
+            is_paused: true,
+            pause_start_time: pauseTime
           })
-          .eq("id", entry.id);
+          .eq("id", timeEntry.id);
 
-        if (timeUpdateErr) {
-          console.error("❌ Error ending time tracking:", timeUpdateErr);
-          // Don't fail the quote submission if time tracking update fails
-          // The job update is more critical
-        } else {
-          console.log(`✅ Time tracking ended successfully: ${durationMinutes} minutes`);
-          timeData = {
-            start_time: entry.start_time,
-            end_time: endTime,
-            duration_minutes: durationMinutes,
-          };
-        }
-      } else {
-        console.log(`ℹ️ No active time tracking found for job ${job_id} - may have been ended previously`);
+      } else if (timeEntry && timeEntry.is_paused) {
+        pausedMinutes = timeEntry.accumulated_minutes || 0;
       }
 
-      // STEP 2: Update job in Supabase with quote data and change status to Quoted
-      // Use conditional update with EXPLICIT status check for better concurrency control
-      console.log(`📝 Updating job ${job_id} status to "Quoted"`);
-      const { data: updatedJob, error: updateError, count } = await supabase
+      // Update job status to Quoted
+      const { data: updatedJob, error: updateError } = await supabase
         .from("jobs")
         .update({
           job_status: "Quoted",
           image_urls: image_urls || [],
           product_names: product_names || [],
-          notes: notes || "",
+          notes: notes || ""
         })
         .eq("id", job_id)
-        .eq("job_status", "In Progress") // Explicit check: only update if currently "In Progress"
+        .eq("job_status", "In Progress")
         .select()
         .single();
 
-      // Handle update failure - rollback time tracking if needed
       if (updateError) {
-        console.error("❌ CRITICAL: Failed to update job status:", updateError);
-        
-        // If time tracking was ended but job update failed, attempt to reopen timer
-        if (timeData) {
-          console.log("⚠️ Attempting to reopen time tracking due to job update failure");
-          const { error: rollbackError } = await supabase
+        // If update failed, resume timer if we paused it
+        if (timeEntry && !timeEntry.is_paused) {
+          await supabase
             .from("time_tracking")
-            .update({ end_time: null, duration_minutes: null })
-            .eq("job_id", job_id)
-            .eq("engineer_id", engineer_id)
-            .eq("end_time", timeData.end_time); // Only reopen if it's the one we just closed
-          
-          if (rollbackError) {
-            console.error("❌ Failed to rollback time tracking:", rollbackError);
-          } else {
-            console.log("✅ Time tracking reopened after job update failure");
-          }
+            .update({
+              accumulated_minutes: timeEntry.accumulated_minutes,
+              is_paused: false,
+              pause_start_time: timeEntry.pause_start_time
+            })
+            .eq("id", timeEntry.id);
         }
-        
         throw new Error(`Failed to update job status: ${updateError.message}`);
       }
 
-      // No rows updated means job was not "In Progress" (concurrent submission or wrong status)
       if (!updatedJob) {
-        console.log("⚠️ Job update returned no rows - job may already be Quoted/Approved");
-        return res.status(409).json({ 
+        return res.status(409).json({
           error: "Quote already submitted",
-          message: "This job is not in 'In Progress' status. It may have been quoted already."
+          message: "This job is not in 'In Progress' status."
         });
       }
 
-      console.log("✅ Job updated with quote data and status changed to 'Quoted'");
-
-      // STEP 3: Trigger n8n webhook with quote data AND time tracking data
-      const webhookUrl =
-        "https://keptcoldhvac.app.n8n.cloud/webhook/job-quote-webhook";
-
+      // Trigger webhook
       try {
-        await fetch(webhookUrl, {
+        await fetch("https://keptcoldhvac.app.n8n.cloud/webhook/job-quote-webhook", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1443,14 +1647,12 @@ app.post("/api/end-job", async (req, res) => {
             product_names,
             notes,
             status: "Quote",
-            timestamp: new Date().toISOString(),
-            time_tracking: timeData, // Include time spent before quote submission
-          }),
+            time_paused_at_minutes: pausedMinutes,
+            timestamp: new Date().toISOString()
+          })
         });
-        console.log("✅ Quote webhook triggered successfully");
       } catch (webhookErr) {
-        console.error("Quote webhook error:", webhookErr);
-        // Don't fail the request if webhook fails
+        console.error("Webhook error:", webhookErr);
       }
 
       res.json({ success: true, job: updatedJob });
@@ -1482,42 +1684,40 @@ app.post("/api/end-job", async (req, res) => {
   /* ===========================
    LEADS SUMMARY - ADMIN ONLY
 =========================== */
-app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) => {
-  try {
-    console.log("Fetching leads summary from Supabase...");
+  app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) => {
+    try {
 
-    // Total customers
-    const { count: totalCustomers, error: customerError } = await supabase
-      .from("companies")
-      .select("*", { count: "exact", head: true }); // only count, no data
+      // Total customers
+      const { count: totalCustomers, error: customerError } = await supabase
+        .from("companies")
+        .select("*", { count: "exact", head: true }); // only count, no data
 
-    if (customerError) {
-      console.error("Error fetching customer count:", customerError.message);
-      return res.status(500).json({ error: customerError.message });
+      if (customerError) {
+        console.error("Error fetching customer count:", customerError.message);
+        return res.status(500).json({ error: customerError.message });
+      }
+
+      // Total pending leads
+      const { count: pendingLeads, error: pendingError } = await supabase
+        .from("companies")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "Pending");
+
+      if (pendingError) {
+        console.error("Error fetching pending leads count:", pendingError.message);
+        return res.status(500).json({ error: pendingError.message });
+      }
+
+      res.json({
+        totalCustomers: totalCustomers || 0,
+        pendingLeads: pendingLeads || 0,
+      });
+
+    } catch (err) {
+      console.error("Unexpected error in /api/leads-summary:", err);
+      res.status(500).json({ error: "Failed to fetch leads summary" });
     }
-
-    // Total pending leads
-    const { count: pendingLeads, error: pendingError } = await supabase
-      .from("companies")
-      .select("*", { count: "exact", head: true })
-      .eq("status", "Pending");
-
-    if (pendingError) {
-      console.error("Error fetching pending leads count:", pendingError.message);
-      return res.status(500).json({ error: pendingError.message });
-    }
-
-    res.json({
-      totalCustomers: totalCustomers || 0,
-      pendingLeads: pendingLeads || 0,
-    });
-
-    console.log("Leads summary sent:", { totalCustomers, pendingLeads });
-  } catch (err) {
-    console.error("Unexpected error in /api/leads-summary:", err);
-    res.status(500).json({ error: "Failed to fetch leads summary" });
-  }
-});
+  });
 
 
   /* ===========================
@@ -1525,21 +1725,61 @@ app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) =
   ============================*/
   app.get("/api/invoices", requireAdminAuth, async (req: AdminRequest, res) => {
     try {
-      console.log("Fetching invoices from Supabase...");
+      const {
+        page = '1',
+        limit = '10',
+        search = '',
+        status = ''
+      } = req.query;
 
-      const { data, error } = await supabase
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+
+      // Build the base query
+      let invoicesQuery = supabase
         .from("Invoice")
-        .select("*")
-        .order("created_at", { ascending: false });
+        .select("*", { count: 'exact' });
 
-        console.log("Supabase response:", { data, error });
+      // Apply search filter if provided
+      if (search) {
+        invoicesQuery = invoicesQuery.or(
+          `id.eq.${isNaN(Number(search)) ? 0 : search},job_id.eq.${isNaN(Number(search)) ? 0 : search},customer_id.eq.${isNaN(Number(search)) ? 0 : search}`
+        );
+      }
+
+      // Apply status filter if provided
+      if (status && status !== 'all') {
+        invoicesQuery = invoicesQuery.eq('status', status);
+      }
+
+      // Get total count first
+      const { count: totalCount } = await invoicesQuery;
+
+      // Now get paginated results, sorted by newest first
+      const { data, error } = await invoicesQuery
+        .order("created_at", { ascending: false })
+        .range(offset, offset + limitNum - 1);
+
       if (error) {
         console.error("Error fetching invoices:", error.message);
         return res.status(500).json({ error: error.message });
       }
 
-      console.log(`Fetched ${data?.length || 0} invoices.`);
-      res.json(data || []);
+      // Calculate pagination metadata
+      const totalPages = Math.ceil((totalCount || 0) / limitNum);
+
+      res.json({
+        data: data || [],
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: totalCount || 0,
+          totalPages,
+          hasNextPage: pageNum < totalPages,
+          hasPreviousPage: pageNum > 1
+        }
+      });
     } catch (err) {
       console.error("Unexpected error in /api/invoices:", err);
       res.status(500).json({ error: "Failed to fetch invoices" });
@@ -1576,13 +1816,51 @@ app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) =
   ============================*/
   app.get("/api/quotes", requireAdminAuth, async (req: AdminRequest, res) => {
     try {
-  
-      console.log("Fetching all quotes from Supabase...");
+      const {
+        page = '1',
+        limit = '10',
+        search = '',
+        status = '',
+        pricingStatus = ''
+      } = req.query;
 
-      const { data, error, count } = await supabase
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+
+      // Build the base query
+      let quotesQuery = supabase
         .from("quotes")
-        .select("*", { count: "exact" })
-        .order("id", { ascending: false });
+        .select("*", { count: "exact" });
+
+      // Apply search filter if provided (search by quote ID or job ID)
+      if (search) {
+        quotesQuery = quotesQuery.or(
+          `id.eq.${isNaN(Number(search)) ? 0 : search},job_id.eq.${isNaN(Number(search)) ? 0 : search}`
+        );
+      }
+
+      // Apply status filter if provided
+      if (status && status !== 'all') {
+        quotesQuery = quotesQuery.eq('status', status);
+      }
+
+      // Apply pricing status filter if provided
+      if (pricingStatus) {
+        if (pricingStatus === 'priced') {
+          quotesQuery = quotesQuery.not('p_prices', 'is', null);
+        } else if (pricingStatus === 'pending') {
+          quotesQuery = quotesQuery.is('p_prices', null);
+        }
+      }
+
+      // Get total count first
+      const { count: totalCount } = await quotesQuery;
+
+      // Now get paginated results, sorted by newest first
+      const { data, error } = await quotesQuery
+        .order("id", { ascending: false })
+        .range(offset, offset + limitNum - 1);
 
       if (error) {
         console.error("Supabase error fetching quotes:", error);
@@ -1593,13 +1871,20 @@ app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) =
         });
       }
 
-      console.log(
-        `Fetched ${data?.length || 0} quotes (Total count: ${count})`,
-      );
+      // Calculate pagination metadata
+      const totalPages = Math.ceil((totalCount || 0) / limitNum);
+
       return res.json({
         success: true,
-        count,
-        quotes: data || [],
+        data: data || [],
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: totalCount || 0,
+          totalPages,
+          hasNextPage: pageNum < totalPages,
+          hasPreviousPage: pageNum > 1
+        }
       });
     } catch (err) {
       console.error("Error in /api/quotes:", err);
@@ -1628,9 +1913,6 @@ app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) =
             .status(400)
             .json({ success: false, error: "Missing p_prices field" });
         }
-
-        console.log(`Updating quote ID: ${id} with prices:`, p_prices);
-
         const { data: updatedQuote, error: updateError } = await supabase
           .from("quotes")
           .update({ p_prices })
@@ -1643,7 +1925,6 @@ app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) =
           throw updateError;
         }
 
-        console.log("Quote updated successfully:", updatedQuote);
 
         // Send to n8n webhook (non-blocking)
         const webhookUrl =
@@ -1682,11 +1963,11 @@ app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) =
       }
     },
   );
-  
+
   ///////////////////////////=====================================serever is runnning check api 
-app.get('/health', (req, res) => {
-  res.send('Server is running');
-});
+  app.get('/health', (req, res) => {
+    res.send('Server is running');
+  });
 
   /* ===========================
      ENGINEER QUOTES - READ ONLY (AUTHENTICATED)
@@ -1704,7 +1985,7 @@ app.get('/health', (req, res) => {
       }
 
       const token = authHeader.substring(7); // Remove "Bearer " prefix
-      
+
       // Verify engineer authentication and get user
       const {
         data: { user },
@@ -1721,7 +2002,6 @@ app.get('/health', (req, res) => {
 
       // Use the authenticated user's ID (server-derived, secure)
       const engineerId = user.id;
-      console.log(`Fetching quotes for authenticated engineer: ${engineerId}`);
 
       // Fetch quotes for this engineer only
       const { data, error } = await supabase
@@ -1739,7 +2019,6 @@ app.get('/health', (req, res) => {
         });
       }
 
-      console.log(`Fetched ${data?.length || 0} quotes for engineer ${engineerId}`);
       return res.json({
         success: true,
         quotes: data || [],
@@ -1753,6 +2032,283 @@ app.get('/health', (req, res) => {
     }
   });
 
+
+
+
+  /* ===========================
+     ENGINEERS MANAGEMENT - ADMIN ONLY
+  ============================*/
+
+  // GET all engineers with pagination and search
+  app.get("/api/engineers", requireAdminAuth, async (req: AdminRequest, res) => {
+    try {
+      const {
+        page = '1',
+        limit = '10',
+        search = '',
+        status = ''
+      } = req.query;
+
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+
+      // Build the base query
+      let engineersQuery = supabase
+        .from("engineers")
+        .select("*", { count: 'exact' });
+
+      // Apply search filter if provided
+      if (search) {
+        engineersQuery = engineersQuery.or(
+          `eng_name.ilike.%${search}%,email.ilike.%${search}%,area.ilike.%${search}%,speciality.ilike.%${search}%`
+        );
+      }
+
+      // Apply status filter if provided
+      if (status && status !== 'all') {
+        engineersQuery = engineersQuery.eq('working_status', status);
+      }
+
+      // Get total count first
+      const { count: totalCount } = await engineersQuery;
+
+      // Now get paginated results
+      const { data, error } = await engineersQuery
+        .order("created_at", { ascending: false })
+        .range(offset, offset + limitNum - 1);
+
+      if (error) {
+        console.error("Error fetching engineers:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      // Calculate pagination metadata
+      const totalPages = Math.ceil((totalCount || 0) / limitNum);
+
+      res.json({
+        data: data || [],
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: totalCount || 0,
+          totalPages,
+          hasNextPage: pageNum < totalPages,
+          hasPreviousPage: pageNum > 1
+        }
+      });
+    } catch (err) {
+      console.error("Error in /api/engineers:", err);
+      res.status(500).json({ error: "Failed to fetch engineers" });
+    }
+  });
+
+  // CREATE new engineer
+  app.post("/api/engineers", requireAdminAuth, async (req: AdminRequest, res) => {
+    try {
+      const {
+        email,
+        password,
+        eng_name,
+        speciality,
+        area,
+        working_status,
+        work_start_time,
+        work_end_time,
+        latitude,
+        longitude
+      } = req.body;
+
+      // Validate required fields
+      if (!email || !password || !eng_name || !speciality || !area) {
+        return res.status(400).json({
+          error: "Missing required fields",
+          required: ["email", "password", "eng_name", "speciality", "area"]
+        });
+      }
+
+      // Format times with timezone
+      const formatTimeWithTimezone = (time: string) => {
+        if (!time) return null;
+        return time.includes(':') ? `${time}:00+00:00` : `${time}+00:00`;
+      };
+
+      // Create auth user
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+      });
+
+      if (authError || !authData.user) {
+        return res.status(400).json({
+          error: authError?.message || "Failed to create account"
+        });
+      }
+
+      // Insert engineer record
+      const { data: engineerData, error: engineerError } = await supabase
+        .from("engineers")
+        .insert({
+          id: authData.user.id,
+          email,
+          eng_name,
+          speciality,
+          area,
+          working_status: working_status || 'active',
+          work_start_time: formatTimeWithTimezone(work_start_time),
+          work_end_time: formatTimeWithTimezone(work_end_time),
+          latitude: latitude || null,
+          longitude: longitude || null
+        })
+        .select()
+        .single();
+
+      if (engineerError) {
+        console.error("Engineer insert error:", engineerError);
+        // Rollback: delete auth user
+        await supabase.auth.admin.deleteUser(authData.user.id);
+        return res.status(400).json({
+          error: engineerError.message,
+          details: engineerError.details,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Engineer created successfully",
+        engineer: engineerData,
+      });
+    } catch (err) {
+      console.error("Error creating engineer:", err);
+      res.status(500).json({ error: "Failed to create engineer" });
+    }
+  });
+
+  // UPDATE engineer
+  app.patch("/api/engineers/:id", requireAdminAuth, async (req: AdminRequest, res) => {
+    try {
+      const { id } = req.params;
+      const {
+        eng_name,
+        email,
+        speciality,
+        area,
+        working_status,
+        work_start_time,
+        work_end_time,
+        latitude,
+        longitude
+      } = req.body;
+
+      // Format times with timezone if provided
+      const formatTimeWithTimezone = (time: string | undefined) => {
+        if (!time) return undefined;
+        return time.includes(':') ? `${time}:00+00:00` : `${time}+00:00`;
+      };
+
+      const updateData: any = {};
+      if (eng_name !== undefined) updateData.eng_name = eng_name;
+      if (email !== undefined) updateData.email = email;
+      if (speciality !== undefined) updateData.speciality = speciality;
+      if (area !== undefined) updateData.area = area;
+      if (working_status !== undefined) updateData.working_status = working_status;
+      if (work_start_time !== undefined) updateData.work_start_time = formatTimeWithTimezone(work_start_time);
+      if (work_end_time !== undefined) updateData.work_end_time = formatTimeWithTimezone(work_end_time);
+      if (latitude !== undefined) updateData.latitude = latitude;
+      if (longitude !== undefined) updateData.longitude = longitude;
+
+      const { data, error } = await supabase
+        .from("engineers")
+        .update(updateData)
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error updating engineer:", error);
+        return res.status(400).json({ error: error.message });
+      }
+
+      // Update auth email if changed
+      if (email) {
+        const { error: authError } = await supabase.auth.admin.updateUserById(
+          id,
+          { email }
+        );
+
+        if (authError) {
+          console.error("Error updating auth email:", authError);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: "Engineer updated successfully",
+        engineer: data,
+      });
+    } catch (err) {
+      console.error("Error updating engineer:", err);
+      res.status(500).json({ error: "Failed to update engineer" });
+    }
+  });
+
+  // DELETE engineer
+  app.delete("/api/engineers/:id", requireAdminAuth, async (req: AdminRequest, res) => {
+    try {
+      const { id } = req.params;
+
+      // Check if engineer has active jobs
+      const { count: activeJobs } = await supabase
+        .from("jobs")
+        .select("*", { count: 'exact', head: true })
+        .eq("engineer_uuid", id)
+        .in("job_status", ["Assigned", "In Progress", "Quoted", "Working"]);
+
+      if (activeJobs && activeJobs > 0) {
+        return res.status(400).json({
+          error: "Cannot delete engineer with active jobs",
+          activeJobs
+        });
+      }
+
+      // Delete engineer record
+      const { error: deleteError } = await supabase
+        .from("engineers")
+        .delete()
+        .eq("id", id);
+
+      if (deleteError) {
+        console.error("Error deleting engineer:", deleteError);
+        return res.status(400).json({ error: deleteError.message });
+      }
+
+      // Delete auth user
+      const { error: authError } = await supabase.auth.admin.deleteUser(id);
+
+      if (authError) {
+        console.error("Error deleting auth user:", authError);
+      }
+
+      res.json({
+        success: true,
+        message: "Engineer deleted successfully",
+      });
+    } catch (err) {
+      console.error("Error deleting engineer:", err);
+      res.status(500).json({ error: "Failed to delete engineer" });
+    }
+  });
+
+
+
   const httpServer = createServer(app);
   return httpServer;
 }
+
+
+
+
+
+
+
