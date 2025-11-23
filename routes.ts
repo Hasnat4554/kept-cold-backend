@@ -233,7 +233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Fetch customers with jobs data
       const { data: customers, error: custErr } = await supabase
-        .from("customers")
+        .from("customer")
         .select("*");
 
       if (custErr) {
@@ -387,7 +387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/jobs/available", async (_req, res) => {
     try {
       const { data, error } = await supabase
-        .from("customers")
+        .from("customer")
         .select("*")
         .eq("status", "new")
         .order("scheduled_time", { ascending: true });
@@ -455,7 +455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // ✅ Step 1: Fetch customer record to get schedule_time and Opening_Hours if not provided
 
       const { data: customer, error: custFetchErr } = await supabase
-        .from("customers")
+        .from("customer")
         .select("id, scheduled_time, Opening_Hours, status")
         .eq("id", Number(customer_id))
         .maybeSingle();
@@ -502,7 +502,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // ✅ Step 4: Update related customer record
       const { error: custUpdateErr } = await supabase
-        .from("customers")
+        .from("customer")
         .update({ status: "assigned", assigned_engineer: engineer_uuid })
         .eq("id", customer_id);
 
@@ -540,7 +540,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Build the base query
         let customersQuery = supabase
-          .from("customers")
+          .from("customer")
           .select("*", { count: 'exact' });
 
         // Apply search filter if provided
@@ -554,10 +554,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (status) {
           customersQuery = customersQuery.eq('status', status);
         }
+        console.log('Exclude Status:', excludeStatus);
 
         if (excludeStatus) {
-          const statusesToExclude = excludeStatus.split(',');
-          statusesToExclude.forEach(s => {
+          const excludeStatusString = String(excludeStatus);
+          const statusesToExclude = excludeStatusString.split(',');
+          statusesToExclude.forEach((s: string) => {
             customersQuery = customersQuery.neq('status', s.trim());
           });
         }
@@ -676,7 +678,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Step 4: Delete customer
         const { error: custDeleteErr } = await supabase
-          .from("customers")
+          .from("customer")
           .delete()
           .eq("id", customer_id);
         if (custDeleteErr) throw custDeleteErr;
@@ -732,7 +734,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Step 2: Update customers table
         if (customerId) {
           const { error: customerUpdateErr } = await supabase
-            .from("customers")
+            .from("customer")
             .update({
               Business_Name,
               Site_Location,
@@ -1038,7 +1040,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get customer details
       const { data: customerData } = await supabase
-        .from("customers")
+        .from("customer")
         .select("Opening_Hours")
         .eq("id", jobData.customer_id)
         .single();
@@ -1318,7 +1320,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { data: customerData } = await supabase
-        .from("customers")
+        .from("customer")
         .select("latitude, longitude")
         .eq("id", jobData.customer_id)
         .single();
@@ -1453,7 +1455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (jobData) {
         await supabase
-          .from("customers")
+          .from("customer")
           .update({ status: "completed" })
           .eq("id", jobData.customer_id);
       }
@@ -1833,10 +1835,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from("quotes")
         .select("*", { count: "exact" });
 
-      // Apply search filter if provided (search by quote ID or job ID)
+      // Enhanced search - now can search by business name, engineer name, contact, location
       if (search) {
         quotesQuery = quotesQuery.or(
-          `id.eq.${isNaN(Number(search)) ? 0 : search},job_id.eq.${isNaN(Number(search)) ? 0 : search}`
+          `id.eq.${isNaN(Number(search)) ? 0 : search},` +
+          `job_id.eq.${isNaN(Number(search)) ? 0 : search},` +
+          `business_name.ilike.%${search}%,` +
+          `eng_name.ilike.%${search}%,` +
+          `site_contact_name.ilike.%${search}%,` +
+          `site_location.ilike.%${search}%`
         );
       }
 
@@ -1871,12 +1878,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Transform data to add calculated fields
+      const transformedData = (data || []).map(quote => {
+        // Calculate total price if p_prices exists
+        let totalPrice = null;
+        if (quote.p_prices) {
+          const visitFee = parseFloat(quote.p_prices.visit_fee || '0');
+          const productsTotal = (quote.p_prices.product_prices || []).reduce((sum: number, item: any) =>
+            sum + parseFloat(item.price || '0'), 0);
+          totalPrice = visitFee + productsTotal;
+        }
+
+        return {
+          ...quote,
+          total_price: totalPrice,
+          products_count: quote.products?.length || 0,
+          has_pricing: quote.p_prices !== null
+        };
+      });
+
       // Calculate pagination metadata
       const totalPages = Math.ceil((totalCount || 0) / limitNum);
 
       return res.json({
         success: true,
-        data: data || [],
+        data: transformedData,
         pagination: {
           page: pageNum,
           limit: limitNum,
