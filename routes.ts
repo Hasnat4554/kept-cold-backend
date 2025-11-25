@@ -229,87 +229,170 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ============================*/
   app.get("/api/engineers/jobs", async (req, res) => {
     try {
-      const { engineer_id } = req.query;
+      const {
+        page = '1',
+        limit = '20',
+        engineer_id = ''
+      } = req.query;
 
-      // Fetch customers with jobs data
-      const { data: customers, error: custErr } = await supabase
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+
+      // 1. AVAILABLE/NEW JOBS (unassigned)
+      const { data: availableCustomers, count: availableCount } = await supabase
         .from("customer")
-        .select("*");
+        .select("*", { count: 'exact' })
+        .eq("status", "new")
+        .order('scheduled_time', { ascending: true })
+        .range(offset, offset + limitNum - 1);
 
-      if (custErr) {
-        console.error("Error fetching customers:", custErr);
-        return res.status(500).json({ error: "Failed to fetch customers" });
-      }
+      // Format available jobs
+      const availableJobs = (availableCustomers || []).map(customer => ({
+        ...customer,
+        job_id: null,
+        job_status: 'new',
+        status: 'new',
+        engineer_uuid: null,
+        engineer_name: null,
+        engineerUploadImages: [],
+        duration_minutes: 0,
+        duration_formatted: null,
+        accumulated_minutes: 0
+      }));
 
-      // Fetch all jobs
-      const { data: jobs, error: jobErr } = await supabase
-        .from("jobs")
-        .select("*");
+      // Initialize arrays for engineer jobs
+      let assignedJobs: any[] = [];
+      let completedJobs: any[] = [];
+      let assignedCount = 0;
+      let completedCount = 0;
 
-      if (jobErr) {
-        console.error("Error fetching jobs:", jobErr);
-        return res.status(500).json({ error: "Failed to fetch jobs" });
-      }
-
-      // ✅ Fetch time tracking data
-      const { data: timeTracking, error: timeErr } = await supabase
-        .from("time_tracking")
-        .select("job_id, duration_minutes, accumulated_minutes")
-        .eq("is_paused", false,);
-
-      if (timeErr) {
-        console.error("Error fetching time tracking:", timeErr);
-      }
-
-      // Join customers with jobs data and time tracking
-      const jobsWithCustomers = (customers || []).map((customer) => {
-        const job = (jobs || []).find((j) => j.customer_id === customer.id);
-
-        // ✅ Find time tracking for this job
-        const timeData = job?.id
-          ? (timeTracking || []).find((t) => t.job_id === job.id)
-          : null;
-
-        // ✅ Calculate formatted duration
-        const durationMinutes = timeData?.duration_minutes || 0;
-        const hours = Math.floor(durationMinutes / 60);
-        const minutes = durationMinutes % 60;
-        const durationFormatted = durationMinutes > 0
-          ? (hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`)
-          : null;
-
-        // Use customer as primary, with job data overlaid
-        return {
-          ...customer,
-          id: customer.id, // Always use customer ID as primary ID
-          job_id: job?.id || null, // Actual job table ID (for internal tracking)
-          status: job?.status || customer.status,
-          job_status: job?.job_status || customer.status,
-          engineer_uuid: job?.engineer_uuid || null,
-          engineer_name: job?.engineer_name || null,
-          scheduled_time: job?.scheduled_time || customer.scheduled_time,
-          engineerUploadImages: job?.image_urls || [],
-          // ✅ Add time tracking fields
-          duration_minutes: durationMinutes,
-          duration_formatted: durationFormatted,
-          accumulated_minutes: timeData?.accumulated_minutes || 0,
-        };
-      });
-
-      // Filter by engineer if specified
+      // Only fetch engineer jobs if engineer_id is provided
       if (engineer_id) {
-        const filtered = jobsWithCustomers.filter(
-          (j) => j.engineer_uuid === engineer_id || j.status === "new",
-        );
-        return res.json(filtered);
+        // 2. ENGINEER'S ASSIGNED/ACTIVE JOBS - FIX: Use ilike for case-insensitive
+        const { data: activeData, count: activeCount } = await supabase
+          .from("jobs")
+          .select(`
+          *,
+          customer:customer_id (*)
+        `, { count: 'exact' })
+          .eq("engineer_uuid", engineer_id)
+          .not("job_status", "ilike", "completed")
+          .not("job_status", "ilike", "invoiced")
+          .not("job_status", "ilike", "paid")
+          .not("job_status", "ilike", "1streminder")
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limitNum - 1);
+
+        console.log('Active jobs fetched:', activeData?.length);
+
+        // 3. ENGINEER'S COMPLETED JOBS - FIX: Use or with ilike for case-insensitive
+        const { data: completedData, count: compCount } = await supabase
+          .from("jobs")
+          .select(`
+          *,
+          customer:customer_id (*)
+        `, { count: 'exact' })
+          .eq("engineer_uuid", engineer_id)
+          .or('job_status.ilike.completed,job_status.ilike.invoiced,job_status.ilike.paid,job_status.ilike.1streminder')
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limitNum - 1);
+
+        console.log('Completed jobs fetched:', completedData?.length);
+
+        // Get time tracking data for engineer's jobs
+        const jobIds = [
+          ...(activeData || []).map(j => j.id),
+          ...(completedData || []).map(j => j.id)
+        ].filter(Boolean);
+
+        let timeTrackingData: any[] = [];
+        if (jobIds.length > 0) {
+          const { data: timeTracking } = await supabase
+            .from("time_tracking")
+            .select("job_id, duration_minutes, accumulated_minutes, is_paused")
+            .in("job_id", jobIds);
+          timeTrackingData = timeTracking || [];
+        }
+
+        // Format assigned jobs
+        assignedJobs = (activeData || []).map(job => {
+          const timeData = timeTrackingData.find(t => t.job_id === job.id);
+          const durationMinutes = timeData?.duration_minutes || 0;
+          const hours = Math.floor(durationMinutes / 60);
+          const minutes = durationMinutes % 60;
+
+          return {
+            ...job.customer,
+            job_id: job.id,
+            job_status: job.job_status,
+            status: job.job_status,
+            engineer_uuid: job.engineer_uuid,
+            engineer_name: job.engineer_name,
+            scheduled_time: job.scheduled_time || job.customer?.scheduled_time,
+            engineerUploadImages: job.image_urls || [],
+            duration_minutes: durationMinutes,
+            duration_formatted: durationMinutes > 0
+              ? (hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`)
+              : null,
+            accumulated_minutes: timeData?.accumulated_minutes || 0,
+            is_paused: timeData?.is_paused || false
+          };
+        });
+
+        // Format completed jobs - ensure consistent status
+        completedJobs = (completedData || []).map(job => {
+          const timeData = timeTrackingData.find(t => t.job_id === job.id);
+          const durationMinutes = timeData?.duration_minutes || 0;
+          const hours = Math.floor(durationMinutes / 60);
+          const minutes = durationMinutes % 60;
+
+          return {
+            ...job.customer,
+            job_id: job.id,
+            job_status: job.job_status || 'Completed', // Use capital C for consistency
+            status: job.job_status || 'Completed',
+            engineer_uuid: job.engineer_uuid,
+            engineer_name: job.engineer_name,
+            scheduled_time: job.scheduled_time || job.customer?.scheduled_time,
+            engineerUploadImages: job.image_urls || [],
+            duration_minutes: durationMinutes,
+            duration_formatted: durationMinutes > 0
+              ? (hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`)
+              : null,
+            accumulated_minutes: timeData?.accumulated_minutes || 0
+          };
+        });
+
+        assignedCount = activeCount || 0;
+        completedCount = compCount || 0;
       }
-      res.json(jobsWithCustomers);
+
+      // Return separate arrays - NO MIXING!
+      res.json({
+        availableJobs: availableJobs,
+        assignedJobs: assignedJobs,
+        completedJobs: completedJobs,
+        counts: {
+          available: availableCount || 0,
+          assigned: assignedCount,
+          completed: completedCount
+        },
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          hasMore: pageNum < Math.ceil(Math.max(
+            (availableCount || 0) / limitNum,
+            assignedCount / limitNum,
+            completedCount / limitNum
+          ))
+        }
+      });
     } catch (error) {
       console.error("Error fetching engineer jobs:", error);
       res.status(500).json({ error: "Failed to fetch jobs" });
     }
   });
-
   /* ===========================
      ADMIN LOGIN (Protected by user_role table)
   ============================*/
@@ -913,7 +996,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error) {
         if (error.code === 'PGRST116') {
           console.log(`No active time tracking found for engineer ${engineerId}`);
-          return res.status(404).json({ message: "No active job found" });
+          return res.status(404).json({ message: "No active Timer start found in the job" });
         }
         console.error(`❌ Database error fetching time tracking:`, error);
         return res.status(500).json({ error: "Database error" });
@@ -1103,7 +1186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      if (distance > 1000) {
+      if (distance > 8000) {
         return res.status(400).json({
           error: "Location verification failed",
           message: `⚠️ You must be within 1km of the job site to start. You're currently ${(distance / 1000).toFixed(2)}km away.`,
@@ -1439,7 +1522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const imageUrl = image_data || null;
 
       // Update job status
-      const { data: jobCheckData } = await supabase
+      await supabase
         .from("jobs")
         .update({
           job_status: "Completed",
