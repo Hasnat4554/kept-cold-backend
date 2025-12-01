@@ -10,7 +10,6 @@ import axios from "axios";
 import ImageKit from "imagekit";
 import multer from "multer";
 
-
 const imagekit = new ImageKit({
   publicKey: process.env.IMAGEKIT_PUBLIC_KEEY || "",
   privateKey: process.env.IMAGEKIT_PRIVATE_KEY || "",
@@ -38,7 +37,7 @@ interface AdminRequest extends Request {
 export async function requireAdminAuth(
   req: AdminRequest,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ): Promise<void> {
   try {
     // Extract Authorization header
@@ -76,7 +75,6 @@ export async function requireAdminAuth(
       .eq("user_id", user.id)
       .eq("role", "admin")
       .single();
-
 
     if (roleError || !roleData) {
       res.status(403).json({
@@ -131,11 +129,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const formatTimeWithTimezone = (time: string) => `${time}:00+05:00`;
 
       // 2️⃣ Create Auth user using service role client (bypasses RLS)
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true, // optional: auto confirm
-      });
+      const { data: authData, error: authError } =
+        await supabase.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true, // optional: auto confirm
+        });
 
       if (authError || !authData.user) {
         return res
@@ -229,11 +228,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ============================*/
   app.get("/api/engineers/jobs", async (req, res) => {
     try {
-      const {
-        page = '1',
-        limit = '20',
-        engineer_id = ''
-      } = req.query;
+      const { page = "1", limit = "20", engineer_id = "" } = req.query;
 
       const pageNum = parseInt(page as string);
       const limitNum = parseInt(limit as string);
@@ -241,24 +236,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // 1. AVAILABLE/NEW JOBS (unassigned)
       const { data: availableCustomers, count: availableCount } = await supabase
-        .from("customer")
-        .select("*", { count: 'exact' })
+        .from("customers")
+        .select("*", { count: "exact" })
         .eq("status", "new")
-        .order('scheduled_time', { ascending: true })
+        .order("scheduled_time", { ascending: true })
         .range(offset, offset + limitNum - 1);
 
       // Format available jobs
-      const availableJobs = (availableCustomers || []).map(customer => ({
+      const availableJobs = (availableCustomers || []).map((customer) => ({
         ...customer,
         job_id: null,
-        job_status: 'new',
-        status: 'new',
+        job_status: "new",
+        status: "new",
         engineer_uuid: null,
         engineer_name: null,
         engineerUploadImages: [],
         duration_minutes: 0,
         duration_formatted: null,
-        accumulated_minutes: 0
+        accumulated_minutes: 0,
       }));
 
       // Initialize arrays for engineer jobs
@@ -272,38 +267,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // 2. ENGINEER'S ASSIGNED/ACTIVE JOBS - FIX: Use ilike for case-insensitive
         const { data: activeData, count: activeCount } = await supabase
           .from("jobs")
-          .select(`
+          .select(
+            `
           *,
           customer:customer_id (*)
-        `, { count: 'exact' })
+        `,
+            { count: "exact" }
+          )
           .eq("engineer_uuid", engineer_id)
           .not("job_status", "ilike", "completed")
           .not("job_status", "ilike", "invoiced")
           .not("job_status", "ilike", "paid")
           .not("job_status", "ilike", "1streminder")
-          .order('created_at', { ascending: false })
+          .order("created_at", { ascending: false })
           .range(offset, offset + limitNum - 1);
 
-        console.log('Active jobs fetched:', activeData?.length);
+        console.log("Active jobs fetched:", activeData?.length);
 
         // 3. ENGINEER'S COMPLETED JOBS - FIX: Use or with ilike for case-insensitive
         const { data: completedData, count: compCount } = await supabase
           .from("jobs")
-          .select(`
+          .select(
+            `
           *,
           customer:customer_id (*)
-        `, { count: 'exact' })
+        `,
+            { count: "exact" }
+          )
           .eq("engineer_uuid", engineer_id)
-          .or('job_status.ilike.completed,job_status.ilike.invoiced,job_status.ilike.paid,job_status.ilike.1streminder')
-          .order('created_at', { ascending: false })
+          .or(
+            "job_status.ilike.completed,job_status.ilike.invoiced,job_status.ilike.paid,job_status.ilike.1streminder"
+          )
+          .order("created_at", { ascending: false })
           .range(offset, offset + limitNum - 1);
 
-        console.log('Completed jobs fetched:', completedData?.length);
+        console.log("Completed jobs fetched:", completedData?.length);
 
         // Get time tracking data for engineer's jobs
         const jobIds = [
-          ...(activeData || []).map(j => j.id),
-          ...(completedData || []).map(j => j.id)
+          ...(activeData || []).map((j) => j.id),
+          ...(completedData || []).map((j) => j.id),
         ].filter(Boolean);
 
         let timeTrackingData: any[] = [];
@@ -316,8 +319,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Format assigned jobs
-        assignedJobs = (activeData || []).map(job => {
-          const timeData = timeTrackingData.find(t => t.job_id === job.id);
+        assignedJobs = (activeData || []).map((job) => {
+          const timeData = timeTrackingData.find((t) => t.job_id === job.id);
           const durationMinutes = timeData?.duration_minutes || 0;
           const hours = Math.floor(durationMinutes / 60);
           const minutes = durationMinutes % 60;
@@ -332,17 +335,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             scheduled_time: job.scheduled_time || job.customer?.scheduled_time,
             engineerUploadImages: job.image_urls || [],
             duration_minutes: durationMinutes,
-            duration_formatted: durationMinutes > 0
-              ? (hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`)
-              : null,
+            duration_formatted:
+              durationMinutes > 0
+                ? hours > 0
+                  ? `${hours}h ${minutes}m`
+                  : `${minutes}m`
+                : null,
             accumulated_minutes: timeData?.accumulated_minutes || 0,
-            is_paused: timeData?.is_paused || false
+            is_paused: timeData?.is_paused || false,
           };
         });
 
         // Format completed jobs - ensure consistent status
-        completedJobs = (completedData || []).map(job => {
-          const timeData = timeTrackingData.find(t => t.job_id === job.id);
+        completedJobs = (completedData || []).map((job) => {
+          const timeData = timeTrackingData.find((t) => t.job_id === job.id);
           const durationMinutes = timeData?.duration_minutes || 0;
           const hours = Math.floor(durationMinutes / 60);
           const minutes = durationMinutes % 60;
@@ -350,17 +356,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return {
             ...job.customer,
             job_id: job.id,
-            job_status: job.job_status || 'Completed', // Use capital C for consistency
-            status: job.job_status || 'Completed',
+            job_status: job.job_status || "Completed", // Use capital C for consistency
+            status: job.job_status || "Completed",
             engineer_uuid: job.engineer_uuid,
             engineer_name: job.engineer_name,
             scheduled_time: job.scheduled_time || job.customer?.scheduled_time,
             engineerUploadImages: job.image_urls || [],
             duration_minutes: durationMinutes,
-            duration_formatted: durationMinutes > 0
-              ? (hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`)
-              : null,
-            accumulated_minutes: timeData?.accumulated_minutes || 0
+            duration_formatted:
+              durationMinutes > 0
+                ? hours > 0
+                  ? `${hours}h ${minutes}m`
+                  : `${minutes}m`
+                : null,
+            accumulated_minutes: timeData?.accumulated_minutes || 0,
           };
         });
 
@@ -376,17 +385,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         counts: {
           available: availableCount || 0,
           assigned: assignedCount,
-          completed: completedCount
+          completed: completedCount,
         },
         pagination: {
           page: pageNum,
           limit: limitNum,
-          hasMore: pageNum < Math.ceil(Math.max(
-            (availableCount || 0) / limitNum,
-            assignedCount / limitNum,
-            completedCount / limitNum
-          ))
-        }
+          hasMore:
+            pageNum <
+            Math.ceil(
+              Math.max(
+                (availableCount || 0) / limitNum,
+                assignedCount / limitNum,
+                completedCount / limitNum
+              )
+            ),
+        },
       });
     } catch (error) {
       console.error("Error fetching engineer jobs:", error);
@@ -431,17 +444,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Step 3: Return session with access_token
+      // Step 3: Return session with access_token and refresh_token
       res.json({
         success: true,
         user_id: authData.user.id,
         role: roleData.role,
         email: authData.user.email,
         access_token: authData.session.access_token,
+        refresh_token: authData.session.refresh_token,
       });
     } catch (err) {
       console.error("Admin login error:", err);
       res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  /* ===========================
+     ADMIN TOKEN REFRESH
+  ============================*/
+  app.post("/api/admin/refresh-token", async (req, res) => {
+    try {
+      const { refresh_token } = req.body;
+
+      if (!refresh_token) {
+        return res.status(400).json({ error: "Refresh token required" });
+      }
+
+      // Use Supabase to refresh the session
+      const { data, error } = await supabase.auth.refreshSession({
+        refresh_token,
+      });
+
+      if (error || !data.session) {
+        return res.status(401).json({
+          error: "Invalid or expired refresh token",
+          message: "Please log in again",
+        });
+      }
+
+      // Verify user still has admin role
+      const { data: roleData, error: roleError } = await supabase
+        .from("user_roles")
+        .select("*")
+        .eq("user_id", data.session.user.id)
+        .eq("role", "admin")
+        .single();
+
+      if (roleError || !roleData) {
+        return res.status(403).json({
+          error: "Access denied",
+          message: "Admin permissions revoked",
+        });
+      }
+
+      res.json({
+        success: true,
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      });
+    } catch (err) {
+      console.error("Admin token refresh error:", err);
+      res.status(500).json({ error: "Token refresh failed" });
+    }
+  });
+
+  /* ===========================
+     ENGINEER TOKEN REFRESH
+  ============================*/
+  app.post("/api/refresh-token", async (req, res) => {
+    try {
+      const { refresh_token } = req.body;
+
+      if (!refresh_token) {
+        return res.status(400).json({ error: "Refresh token required" });
+      }
+
+      // Use Supabase to refresh the session
+      const { data, error } = await supabase.auth.refreshSession({
+        refresh_token,
+      });
+
+      if (error || !data.session) {
+        return res.status(401).json({
+          error: "Invalid or expired refresh token",
+          message: "Please log in again",
+        });
+      }
+
+      // Verify user is still an engineer
+      const { data: engineerData, error: engineerError } = await supabase
+        .from("engineers")
+        .select("*")
+        .eq("id", data.session.user.id)
+        .single();
+
+      if (engineerError || !engineerData) {
+        return res.status(403).json({
+          error: "Access denied",
+          message: "Engineer profile not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      });
+    } catch (err) {
+      console.error("Engineer token refresh error:", err);
+      res.status(500).json({ error: "Token refresh failed" });
     }
   });
 
@@ -470,7 +581,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/jobs/available", async (_req, res) => {
     try {
       const { data, error } = await supabase
-        .from("customer")
+        .from("customers")
         .select("*")
         .eq("status", "new")
         .order("scheduled_time", { ascending: true });
@@ -485,28 +596,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      GEOCODING VIA GOOGLE MAPS
   ============================*/
+
   app.post("/api/geocode", async (req, res) => {
     try {
-      const { address, postcode } = req.body;
-      if (!address && !postcode)
+      const { customer_id, address, postcode } = req.body;
+
+      if (!address && !postcode) {
         return res.status(400).json({ error: "Missing address/postcode" });
+      }
+
+      // ✅ STEP 1: Check if customer already has geocoded data in DB
+      if (customer_id) {
+        const { data: existingCustomer } = await supabase
+          .from("customers")
+          .select("id, latitude, longitude, formatted_address")
+          .eq("id", customer_id)
+          .single();
+
+        // ✅ If coordinates exist, return them immediately (no API call!)
+        if (existingCustomer?.latitude && existingCustomer?.longitude) {
+          console.log(
+            `✅ Using cached coordinates for customer ${customer_id}`
+          );
+          return res.json({
+            latitude: existingCustomer.latitude,
+            longitude: existingCustomer.longitude,
+            formatted_address:
+              existingCustomer.formatted_address || `${address}, ${postcode}`,
+            cached: true, // Flag to indicate this was from DB
+          });
+        }
+      }
+
+      // ✅ STEP 2: No cached data - call Google Geocoding API
+      console.log(
+        `🌍 Geocoding address for customer ${
+          customer_id || "unknown"
+        }: ${address}, ${postcode}`
+      );
 
       const query = postcode ? `${address}, ${postcode}, UK` : `${address}, UK`;
       const apiKey = process.env.VITE_GOOGLE_MAPS_API_KEY;
       const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-        query,
+        query
       )}&key=${apiKey}`;
+
       const response = await fetch(url);
       const data = (await response.json()) as any;
 
-      if (data.status !== "OK" || !data.results?.length)
+      if (data.status !== "OK" || !data.results?.length) {
         return res.status(404).json({ error: "Location not found" });
+      }
 
       const loc = data.results[0].geometry.location;
+      const formattedAddress = data.results[0].formatted_address;
+
+      // ✅ STEP 3: Store geocoded coordinates in DB for future use
+      if (customer_id) {
+        const { error: updateError } = await supabase
+          .from("customers")
+          .update({
+            latitude: loc.lat,
+            longitude: loc.lng,
+            formatted_address: formattedAddress,
+          })
+          .eq("id", customer_id);
+
+        if (updateError) {
+          console.error("❌ Failed to cache geocode data:", updateError);
+        } else {
+          console.log(
+            `✅ Stored coordinates in DB for customer ${customer_id}`
+          );
+        }
+      }
+
+      // ✅ STEP 4: Return fresh geocoded data
       res.json({
         latitude: loc.lat,
         longitude: loc.lng,
-        formatted_address: data.results[0].formatted_address,
+        formatted_address: formattedAddress,
+        cached: false, // Flag to indicate this was a fresh API call
       });
     } catch (err) {
       console.error(err);
@@ -538,7 +708,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // ✅ Step 1: Fetch customer record to get schedule_time and Opening_Hours if not provided
 
       const { data: customer, error: custFetchErr } = await supabase
-        .from("customer")
+        .from("customers")
         .select("id, scheduled_time, Opening_Hours, status")
         .eq("id", Number(customer_id))
         .maybeSingle();
@@ -585,7 +755,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // ✅ Step 4: Update related customer record
       const { error: custUpdateErr } = await supabase
-        .from("customer")
+        .from("customers")
         .update({ status: "assigned", assigned_engineer: engineer_uuid })
         .eq("id", customer_id);
 
@@ -608,13 +778,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const {
           engineer_id,
-          page = '1',
-          limit = '10',
-          search = '',
-          status = '',
-          dateFrom = '',
-          excludeStatus = '', // New parameter
-          dateTo = ''
+          page = "1",
+          limit = "10",
+          search = "",
+          status = "",
+          dateFrom = "",
+          excludeStatus = "", // New parameter
+          dateTo = "",
         } = req.query;
 
         const pageNum = parseInt(page as string);
@@ -623,37 +793,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Build the base query
         let customersQuery = supabase
-          .from("customer")
-          .select("*", { count: 'exact' });
+          .from("customers")
+          .select("*", { count: "exact" });
 
         // Apply search filter if provided
         if (search) {
           customersQuery = customersQuery.or(
-            `Business_Name.ilike.%${search}%,Site_Location.ilike.%${search}%,id.eq.${isNaN(Number(search)) ? 0 : search}`
+            `Business_Name.ilike.%${search}%,Site_Location.ilike.%${search}%,id.eq.${
+              isNaN(Number(search)) ? 0 : search
+            }`
           );
         }
 
         // Apply status filter if provided
         if (status) {
-          customersQuery = customersQuery.eq('status', status);
+          customersQuery = customersQuery.eq("status", status);
         }
-        console.log('Exclude Status:', excludeStatus);
+        console.log("Exclude Status:", excludeStatus);
 
         if (excludeStatus) {
           const excludeStatusString = String(excludeStatus);
-          const statusesToExclude = excludeStatusString.split(',');
+          const statusesToExclude = excludeStatusString.split(",");
           statusesToExclude.forEach((s: string) => {
-            customersQuery = customersQuery.neq('status', s.trim());
+            customersQuery = customersQuery.neq("status", s.trim());
           });
         }
 
         // Apply date filters if provided
         if (dateFrom || dateTo) {
           if (dateFrom) {
-            customersQuery = customersQuery.gte('created_at', dateFrom);
+            customersQuery = customersQuery.gte("created_at", dateFrom);
           }
           if (dateTo) {
-            customersQuery = customersQuery.lte('created_at', dateTo);
+            customersQuery = customersQuery.lte("created_at", dateTo);
           }
         }
 
@@ -682,7 +854,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const jobsWithCustomers = customers.map((c) => {
           const assigned = jobs?.find((j) => j.customer_id === c.id);
           const timeEntry = timeTracking?.find(
-            (t) => t.job_id === assigned?.id,
+            (t) => t.job_id === assigned?.id
           );
           return {
             ...c,
@@ -703,7 +875,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Calculate pagination metadata
         const totalPages = Math.ceil((totalCount || 0) / limitNum);
 
-        console.log(`Fetched ${result.length} jobs (Page ${pageNum} of ${totalPages})`);
+        console.log(
+          `Fetched ${result.length} jobs (Page ${pageNum} of ${totalPages})`
+        );
         res.json({
           data: result,
           pagination: {
@@ -712,14 +886,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             total: totalCount || 0,
             totalPages,
             hasNextPage: pageNum < totalPages,
-            hasPreviousPage: pageNum > 1
-          }
+            hasPreviousPage: pageNum > 1,
+          },
         });
       } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch jobs" });
       }
-    },
+    }
   );
 
   /* ===========================
@@ -761,7 +935,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Step 4: Delete customer
         const { error: custDeleteErr } = await supabase
-          .from("customer")
+          .from("customers")
           .delete()
           .eq("id", customer_id);
         if (custDeleteErr) throw custDeleteErr;
@@ -774,7 +948,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Delete job error:", err);
         res.status(500).json({ error: "Failed to delete customer and jobs." });
       }
-    },
+    }
   );
 
   /* ===========================
@@ -817,7 +991,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Step 2: Update customers table
         if (customerId) {
           const { error: customerUpdateErr } = await supabase
-            .from("customer")
+            .from("customers")
             .update({
               Business_Name,
               Site_Location,
@@ -861,7 +1035,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Edit job error:", err);
         res.status(500).json({ error: "Failed to update job" });
       }
-    },
+    }
   );
 
   /* ===========================
@@ -871,7 +1045,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     lat1: number,
     lon1: number,
     lat2: number,
-    lon2: number,
+    lon2: number
   ): number {
     const R = 6371e3; // Earth radius in meters
     const φ1 = (lat1 * Math.PI) / 180;
@@ -922,8 +1096,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (matches[1][3]?.toUpperCase() === "AM" && endHour === 12)
           endHour = 0;
 
-        const startTime = `${startHour.toString().padStart(2, "0")}:${startMin.toString().padStart(2, "0")}`;
-        const endTime = `${endHour.toString().padStart(2, "0")}:${endMin.toString().padStart(2, "0")}`;
+        const startTime = `${startHour.toString().padStart(2, "0")}:${startMin
+          .toString()
+          .padStart(2, "0")}`;
+        const endTime = `${endHour.toString().padStart(2, "0")}:${endMin
+          .toString()
+          .padStart(2, "0")}`;
 
         return currentTime >= startTime && currentTime <= endTime;
       }
@@ -939,7 +1117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     lat1: number,
     lon1: number,
     lat2: number,
-    lon2: number,
+    lon2: number
   ): Promise<number | null> {
     const apiKey = process.env.GOOGLE_API_KEY; // Store it in .env
     const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${lat1},${lon1}&destinations=${lat2},${lon2}&key=${apiKey}`;
@@ -947,14 +1125,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const response = await axios.get(url);
 
-      if (!response.data || !response.data.rows || response.data.rows.length === 0) {
+      if (
+        !response.data ||
+        !response.data.rows ||
+        response.data.rows.length === 0
+      ) {
         console.error("Google API returned invalid data structure");
         return null;
       }
 
       const element = response.data.rows[0].elements[0];
 
-      if (element.status === "OK" && element.distance && element.distance.value !== undefined) {
+      if (
+        element.status === "OK" &&
+        element.distance &&
+        element.distance.value !== undefined
+      ) {
         // Distance in meters
         return element.distance.value;
       } else if (element.status === "ZERO_RESULTS") {
@@ -992,11 +1178,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .limit(1)
         .single();
 
-      console.log('error in the error', error)
+      console.log("error in the error", error);
       if (error) {
-        if (error.code === 'PGRST116') {
-          console.log(`No active time tracking found for engineer ${engineerId}`);
-          return res.status(404).json({ message: "No active Timer start found in the job" });
+        if (error.code === "PGRST116") {
+          console.log(
+            `No active time tracking found for engineer ${engineerId}`
+          );
+          return res
+            .status(404)
+            .json({ message: "No active Timer start found in the job" });
         }
         console.error(`❌ Database error fetching time tracking:`, error);
         return res.status(500).json({ error: "Database error" });
@@ -1015,7 +1205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .single();
 
       if (jobStatusError) {
-        if (jobStatusError.code === 'PGRST116') {
+        if (jobStatusError.code === "PGRST116") {
           console.log(`Job ${activeEntry.job_id} not found`);
           return res.status(404).json({ message: "No active job found" });
         }
@@ -1023,8 +1213,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "Database error" });
       }
 
-      const jobStatus = jobData?.job_status?.toLowerCase() || '';
-      console.log(`Job ${activeEntry.job_id} status: ${jobStatus}, is_paused: ${activeEntry.is_paused}`);
+      const jobStatus = jobData?.job_status?.toLowerCase() || "";
+      console.log(
+        `Job ${activeEntry.job_id} status: ${jobStatus}, is_paused: ${activeEntry.is_paused}`
+      );
 
       // ✅ IMPORTANT FIX: Return the data even for quoted/approved jobs
       // The timer is just paused, not ended, so we need this data
@@ -1032,7 +1224,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Calculate current total time
       let currentTotalMinutes = activeEntry.accumulated_minutes || 0;
       if (!activeEntry.is_paused) {
-        const lastActionTime = activeEntry.pause_start_time || activeEntry.start_time;
+        const lastActionTime =
+          activeEntry.pause_start_time || activeEntry.start_time;
         const currentSegment = Math.floor(
           (Date.now() - new Date(lastActionTime).getTime()) / 1000 / 60
         );
@@ -1049,9 +1242,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pause_start_time: activeEntry.pause_start_time,
         current_total_minutes: currentTotalMinutes,
         job_status: jobData.job_status,
-        image_urls: jobData.image_urls
+        image_urls: jobData.image_urls,
       });
-
     } catch (err) {
       console.error("❌ Unexpected error in /active-job endpoint:", err);
       return res.status(500).json({ error: "Failed to fetch active job" });
@@ -1066,10 +1258,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ============================*/
   app.post("/api/start-job", async (req, res) => {
     try {
-      const { job_id, engineer_id, engineer_latitude, engineer_longitude } = req.body;
+      const { job_id, engineer_id, engineer_latitude, engineer_longitude } =
+        req.body;
 
       if (!job_id || !engineer_id) {
-        return res.status(400).json({ error: "job_id and engineer_id required" });
+        return res
+          .status(400)
+          .json({ error: "job_id and engineer_id required" });
       }
 
       // Check if time tracking already exists for this job
@@ -1089,25 +1284,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .from("time_tracking")
             .update({
               is_paused: false,
-              pause_start_time: resumeTime
+              pause_start_time: resumeTime,
             })
             .eq("id", existingEntry.id);
 
           return res.json({
             success: true,
             message: "Job resumed",
-            time_entry: existingEntry
+            time_entry: existingEntry,
           });
         }
         return res.status(400).json({
-          error: "Time tracking already active for this job"
+          error: "Time tracking already active for this job",
         });
       }
 
       // Get job details for validation
       const { data: jobData } = await supabase
         .from("jobs")
-        .select("customer_id, customer_latitude, customer_longitude, site_location, job_status")
+        .select(
+          "customer_id, customer_latitude, customer_longitude, site_location, job_status"
+        )
         .eq("id", job_id)
         .single();
 
@@ -1117,13 +1314,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (jobData.job_status?.toLowerCase() === "quoted") {
         return res.status(403).json({
-          error: "Cannot start job with Quoted status. Please wait for admin approval."
+          error:
+            "Cannot start job with Quoted status. Please wait for admin approval.",
         });
       }
 
       // Get customer details
       const { data: customerData } = await supabase
-        .from("customer")
+        .from("customers")
         .select("Opening_Hours")
         .eq("id", jobData.customer_id)
         .single();
@@ -1143,21 +1341,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!engineer_latitude || !engineer_longitude) {
         return res.status(400).json({
           error: "Location required",
-          message: "⚠️ Please enable location services to start the job. Location verification is mandatory."
+          message:
+            "⚠️ Please enable location services to start the job. Location verification is mandatory.",
         });
       }
 
       if (!locationData.latitude || !locationData.longitude) {
         return res.status(400).json({
           error: "Customer location missing",
-          message: `⚠️ Customer location not available for ${locationData.Site_Location}. Please contact admin to geocode this address.`
+          message: `⚠️ Customer location not available for ${locationData.Site_Location}. Please contact admin to geocode this address.`,
         });
       }
 
       // Distance calculation (keeping your existing logic)
       let distance = null;
-      const latDiff = Math.abs(engineer_latitude - Number(locationData.latitude));
-      const lonDiff = Math.abs(engineer_longitude - Number(locationData.longitude));
+      const latDiff = Math.abs(
+        engineer_latitude - Number(locationData.latitude)
+      );
+      const lonDiff = Math.abs(
+        engineer_longitude - Number(locationData.longitude)
+      );
 
       if (latDiff < 0.0001 && lonDiff < 0.0001) {
         distance = 0;
@@ -1182,16 +1385,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (distance === null) {
         return res.status(400).json({
           error: "Distance check failed",
-          message: "⚠️ Unable to verify distance. Please try again."
+          message: "⚠️ Unable to verify distance. Please try again.",
         });
       }
 
       if (distance > 8000) {
         return res.status(400).json({
           error: "Location verification failed",
-          message: `⚠️ You must be within 1km of the job site to start. You're currently ${(distance / 1000).toFixed(2)}km away.`,
+          message: `⚠️ You must be within 1km of the job site to start. You're currently ${(
+            distance / 1000
+          ).toFixed(2)}km away.`,
           distance: Math.round(distance),
-          distanceKm: (distance / 1000).toFixed(2)
+          distanceKm: (distance / 1000).toFixed(2),
         });
       }
 
@@ -1202,7 +1407,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({
             error: "Time verification failed",
             message: `This job should be started during customer's opening hours: ${locationData.Opening_Hours}`,
-            opening_hours: locationData.Opening_Hours
+            opening_hours: locationData.Opening_Hours,
           });
         }
       }
@@ -1216,9 +1421,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           job_id,
           engineer_id,
           start_time: startTime,
-          accumulated_minutes: 0,        // NEW COLUMN
-          is_paused: false,              // NEW COLUMN
-          pause_start_time: startTime    // NEW COLUMN
+          accumulated_minutes: 0, // NEW COLUMN
+          is_paused: false, // NEW COLUMN
+          pause_start_time: startTime, // NEW COLUMN
         })
         .select()
         .single();
@@ -1248,7 +1453,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { job_id, engineer_id } = req.body;
 
       if (!job_id || !engineer_id) {
-        return res.status(400).json({ error: "job_id and engineer_id required" });
+        return res
+          .status(400)
+          .json({ error: "job_id and engineer_id required" });
       }
 
       // Get the single row
@@ -1267,7 +1474,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (entry.is_paused) {
         return res.status(400).json({
           error: "Job is already paused",
-          accumulated_minutes: entry.accumulated_minutes
+          accumulated_minutes: entry.accumulated_minutes,
         });
       }
 
@@ -1277,7 +1484,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         (Date.now() - new Date(lastActionTime).getTime()) / 1000 / 60
       );
 
-      const newAccumulatedMinutes = (entry.accumulated_minutes || 0) + minutesSinceLastAction;
+      const newAccumulatedMinutes =
+        (entry.accumulated_minutes || 0) + minutesSinceLastAction;
       const pauseTime = new Date().toISOString();
 
       // Update the SAME row
@@ -1286,18 +1494,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .update({
           accumulated_minutes: newAccumulatedMinutes,
           is_paused: true,
-          pause_start_time: pauseTime
+          pause_start_time: pauseTime,
         })
         .eq("id", entry.id);
 
       if (updateError) throw updateError;
 
-
       res.json({
         success: true,
         paused_at: pauseTime,
         session_minutes: minutesSinceLastAction,
-        total_minutes: newAccumulatedMinutes
+        total_minutes: newAccumulatedMinutes,
       });
     } catch (err) {
       console.error(err);
@@ -1315,7 +1522,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { job_id, engineer_id } = req.body;
 
       if (!job_id || !engineer_id) {
-        return res.status(400).json({ error: "job_id and engineer_id required" });
+        return res
+          .status(400)
+          .json({ error: "job_id and engineer_id required" });
       }
 
       // Get the single row
@@ -1334,7 +1543,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!entry.is_paused) {
         return res.status(400).json({
           error: "Job is not paused",
-          accumulated_minutes: entry.accumulated_minutes
+          accumulated_minutes: entry.accumulated_minutes,
         });
       }
 
@@ -1345,13 +1554,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from("time_tracking")
         .update({
           is_paused: false,
-          pause_start_time: resumeTime  // Track when we resumed for next calculation
+          pause_start_time: resumeTime, // Track when we resumed for next calculation
         })
         .eq("id", entry.id);
 
       if (updateError) throw updateError;
-
-
 
       const { data: jobData } = await supabase
         .from("jobs")
@@ -1360,20 +1567,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .single();
 
       // ✅ If status was "Approved", change it to "Working" to indicate post-quote work
-      if (jobData?.job_status?.toLowerCase() === 'approved') {
+      if (jobData?.job_status?.toLowerCase() === "approved") {
         await supabase
           .from("jobs")
-          .update({ job_status: "Working" })  // New status!
+          .update({ job_status: "Working" }) // New status!
           .eq("id", job_id);
-
       }
 
       res.json({
         success: true,
         resumed_at: resumeTime,
         accumulated_minutes: entry.accumulated_minutes,
-        job_status: jobData?.job_status === 'Approved' ? 'Working' : jobData?.job_status
-
+        job_status:
+          jobData?.job_status === "Approved" ? "Working" : jobData?.job_status,
       });
     } catch (err) {
       console.error(err);
@@ -1403,7 +1609,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { data: customerData } = await supabase
-        .from("customer")
+        .from("customers")
         .select("latitude, longitude")
         .eq("id", jobData.customer_id)
         .single();
@@ -1416,7 +1622,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         engineer_latitude,
         engineer_longitude,
         customerData.latitude,
-        customerData.longitude,
+        customerData.longitude
       );
 
       res.json({
@@ -1445,12 +1651,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         products = [],
         manual_duration_minutes = null,
         time_adjustment_minutes = 0,
-        adjustment_reason = ""
+        adjustment_reason = "",
       } = req.body;
 
-
       if (!job_id || !engineer_id) {
-        return res.status(400).json({ error: "job_id and engineer_id required" });
+        return res
+          .status(400)
+          .json({ error: "job_id and engineer_id required" });
       }
 
       // Get the single time tracking row
@@ -1476,8 +1683,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Manual override
         totalDurationMinutes = manual_duration_minutes;
         calculationMethod = "manual_override";
-        finalAdjustmentReason = adjustment_reason || "Manual time entry by engineer";
-
+        finalAdjustmentReason =
+          adjustment_reason || "Manual time entry by engineer";
       } else {
         // Calculate from accumulated + current segment if not paused
         let finalMinutes = entry.accumulated_minutes || 0;
@@ -1493,15 +1700,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Apply adjustment
         if (time_adjustment_minutes !== 0) {
-          totalDurationMinutes = Math.max(0, finalMinutes + time_adjustment_minutes);
+          totalDurationMinutes = Math.max(
+            0,
+            finalMinutes + time_adjustment_minutes
+          );
           calculationMethod = "adjusted";
-          finalAdjustmentReason = adjustment_reason || `Time adjusted by ${time_adjustment_minutes} minutes`;
+          finalAdjustmentReason =
+            adjustment_reason ||
+            `Time adjusted by ${time_adjustment_minutes} minutes`;
           finalAdjustmentMinutes = time_adjustment_minutes;
         } else {
           totalDurationMinutes = finalMinutes;
           calculationMethod = "automatic";
         }
-
       }
 
       // Update the time tracking row with final data INCLUDING calculation method and reason
@@ -1514,7 +1725,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           accumulated_minutes: totalDurationMinutes,
           calculation_method: calculationMethod,
           adjustment_reason: finalAdjustmentReason,
-          adjustment_minutes: finalAdjustmentMinutes
+          adjustment_minutes: finalAdjustmentMinutes,
         })
         .eq("id", entry.id);
 
@@ -1538,7 +1749,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (jobData) {
         await supabase
-          .from("customer")
+          .from("customers")
           .update({ status: "completed" })
           .eq("id", jobData.customer_id);
       }
@@ -1556,8 +1767,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             adjustment_reason: finalAdjustmentReason,
             end_time: endTime,
             image_url: imageUrl,
-            products_used: products
-          })
+            products_used: products,
+          }),
         });
       } catch (webhookErr) {
         console.error("Webhook error:", webhookErr);
@@ -1568,9 +1779,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         total_duration_minutes: totalDurationMinutes,
         calculation_method: calculationMethod,
         image_url: imageUrl,
-        products_count: products.length
+        products_count: products.length,
       });
-
     } catch (err) {
       console.error("❌ Error in end-job:", err);
       res.status(500).json({ error: "Failed to end job" });
@@ -1580,7 +1790,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      UPLOAD MULTIPLE IMAGES TO IMAGEKIT
   ============================*/
-  app.post("/api/upload-images-imagekit",
+  app.post(
+    "/api/upload-images-imagekit",
     upload.array("images", 10),
     async (req, res) => {
       try {
@@ -1590,8 +1801,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!files || files.length === 0) {
           return res.status(400).json({ error: "No images provided" });
         }
-
-
 
         const uploadedUrls: string[] = [];
 
@@ -1609,7 +1818,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
 
           uploadedUrls.push(result.url);
-
         }
 
         res.json({ success: true, urls: uploadedUrls });
@@ -1617,7 +1825,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("ImageKit upload error:", err);
         res.status(500).json({ error: "Failed to upload images" });
       }
-    },
+    }
   );
 
   /* ===========================
@@ -1628,12 +1836,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ============================*/
   app.post("/api/submit-job-quote", async (req, res) => {
     try {
-      const { job_id, image_urls, product_names, notes, engineer_id } = req.body;
+      const { job_id, image_urls, product_names, notes, engineer_id } =
+        req.body;
 
       if (!job_id) {
         return res.status(400).json({ error: "Job ID is required" });
       }
-
 
       // Check current status
       const { data: existingJob } = await supabase
@@ -1642,11 +1850,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .eq("id", job_id)
         .single();
 
-      const currentStatus = existingJob?.job_status?.toLowerCase() || '';
-      if (currentStatus === 'quoted' || currentStatus === 'approved') {
+      const currentStatus = existingJob?.job_status?.toLowerCase() || "";
+      if (currentStatus === "quoted" || currentStatus === "approved") {
         return res.status(400).json({
           error: "Quote already submitted",
-          message: `This job already has status "${existingJob?.job_status}".`
+          message: `This job already has status "${existingJob?.job_status}".`,
         });
       }
 
@@ -1662,7 +1870,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let pausedMinutes = 0;
       if (timeEntry && !timeEntry.is_paused) {
         // Calculate and accumulate current segment
-        const lastActionTime = timeEntry.pause_start_time || timeEntry.start_time;
+        const lastActionTime =
+          timeEntry.pause_start_time || timeEntry.start_time;
         const currentSegment = Math.floor(
           (Date.now() - new Date(lastActionTime).getTime()) / 1000 / 60
         );
@@ -1676,10 +1885,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .update({
             accumulated_minutes: pausedMinutes,
             is_paused: true,
-            pause_start_time: pauseTime
+            pause_start_time: pauseTime,
           })
           .eq("id", timeEntry.id);
-
       } else if (timeEntry && timeEntry.is_paused) {
         pausedMinutes = timeEntry.accumulated_minutes || 0;
       }
@@ -1691,7 +1899,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           job_status: "Quoted",
           image_urls: image_urls || [],
           product_names: product_names || [],
-          notes: notes || ""
+          notes: notes || "",
         })
         .eq("id", job_id)
         .eq("job_status", "In Progress")
@@ -1706,7 +1914,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .update({
               accumulated_minutes: timeEntry.accumulated_minutes,
               is_paused: false,
-              pause_start_time: timeEntry.pause_start_time
+              pause_start_time: timeEntry.pause_start_time,
             })
             .eq("id", timeEntry.id);
         }
@@ -1716,26 +1924,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updatedJob) {
         return res.status(409).json({
           error: "Quote already submitted",
-          message: "This job is not in 'In Progress' status."
+          message: "This job is not in 'In Progress' status.",
         });
       }
 
       // Trigger webhook
       try {
-        await fetch("https://keptcoldhvac.app.n8n.cloud/webhook/job-quote-webhook", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            job_id,
-            engineer_id,
-            image_urls,
-            product_names,
-            notes,
-            status: "Quote",
-            time_paused_at_minutes: pausedMinutes,
-            timestamp: new Date().toISOString()
-          })
-        });
+        await fetch(
+          "https://keptcoldhvac.app.n8n.cloud/webhook/job-quote-webhook",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              job_id,
+              engineer_id,
+              image_urls,
+              product_names,
+              notes,
+              status: "Quote",
+              time_paused_at_minutes: pausedMinutes,
+              timestamp: new Date().toISOString(),
+            }),
+          }
+        );
       } catch (webhookErr) {
         console.error("Webhook error:", webhookErr);
       }
@@ -1769,53 +1980,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
    LEADS SUMMARY - ADMIN ONLY
 =========================== */
-  app.get("/api/leads-summary", requireAdminAuth, async (req: AdminRequest, res) => {
-    try {
+  app.get(
+    "/api/leads-summary",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        // Total customers
+        const { count: totalCustomers, error: customerError } = await supabase
+          .from("companies")
+          .select("*", { count: "exact", head: true }); // only count, no data
 
-      // Total customers
-      const { count: totalCustomers, error: customerError } = await supabase
-        .from("companies")
-        .select("*", { count: "exact", head: true }); // only count, no data
+        if (customerError) {
+          console.error(
+            "Error fetching customer count:",
+            customerError.message
+          );
+          return res.status(500).json({ error: customerError.message });
+        }
 
-      if (customerError) {
-        console.error("Error fetching customer count:", customerError.message);
-        return res.status(500).json({ error: customerError.message });
+        // Total pending leads
+        const { count: pendingLeads, error: pendingError } = await supabase
+          .from("companies")
+          .select("*", { count: "exact", head: true })
+          .eq("status", "Pending");
+
+        if (pendingError) {
+          console.error(
+            "Error fetching pending leads count:",
+            pendingError.message
+          );
+          return res.status(500).json({ error: pendingError.message });
+        }
+
+        res.json({
+          totalCustomers: totalCustomers || 0,
+          pendingLeads: pendingLeads || 0,
+        });
+      } catch (err) {
+        console.error("Unexpected error in /api/leads-summary:", err);
+        res.status(500).json({ error: "Failed to fetch leads summary" });
       }
-
-      // Total pending leads
-      const { count: pendingLeads, error: pendingError } = await supabase
-        .from("companies")
-        .select("*", { count: "exact", head: true })
-        .eq("status", "Pending");
-
-      if (pendingError) {
-        console.error("Error fetching pending leads count:", pendingError.message);
-        return res.status(500).json({ error: pendingError.message });
-      }
-
-      res.json({
-        totalCustomers: totalCustomers || 0,
-        pendingLeads: pendingLeads || 0,
-      });
-
-    } catch (err) {
-      console.error("Unexpected error in /api/leads-summary:", err);
-      res.status(500).json({ error: "Failed to fetch leads summary" });
     }
-  });
-
+  );
 
   /* ===========================
      INVOICES MANAGEMENT - ADMIN ONLY
   ============================*/
   app.get("/api/invoices", requireAdminAuth, async (req: AdminRequest, res) => {
     try {
-      const {
-        page = '1',
-        limit = '10',
-        search = '',
-        status = ''
-      } = req.query;
+      const { page = "1", limit = "10", search = "", status = "" } = req.query;
 
       const pageNum = parseInt(page as string);
       const limitNum = parseInt(limit as string);
@@ -1824,18 +2037,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Build the base query
       let invoicesQuery = supabase
         .from("Invoice")
-        .select("*", { count: 'exact' });
+        .select("*", { count: "exact" });
 
       // Apply search filter if provided
       if (search) {
         invoicesQuery = invoicesQuery.or(
-          `id.eq.${isNaN(Number(search)) ? 0 : search},job_id.eq.${isNaN(Number(search)) ? 0 : search},customer_id.eq.${isNaN(Number(search)) ? 0 : search}`
+          `id.eq.${isNaN(Number(search)) ? 0 : search},job_id.eq.${
+            isNaN(Number(search)) ? 0 : search
+          },customer_id.eq.${isNaN(Number(search)) ? 0 : search}`
         );
       }
 
       // Apply status filter if provided
-      if (status && status !== 'all') {
-        invoicesQuery = invoicesQuery.eq('status', status);
+      if (status && status !== "all") {
+        invoicesQuery = invoicesQuery.eq("status", status);
       }
 
       // Get total count first
@@ -1862,8 +2077,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           total: totalCount || 0,
           totalPages,
           hasNextPage: pageNum < totalPages,
-          hasPreviousPage: pageNum > 1
-        }
+          hasPreviousPage: pageNum > 1,
+        },
       });
     } catch (err) {
       console.error("Unexpected error in /api/invoices:", err);
@@ -1902,11 +2117,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/quotes", requireAdminAuth, async (req: AdminRequest, res) => {
     try {
       const {
-        page = '1',
-        limit = '10',
-        search = '',
-        status = '',
-        pricingStatus = ''
+        page = "1",
+        limit = "10",
+        search = "",
+        status = "",
+        pricingStatus = "",
       } = req.query;
 
       const pageNum = parseInt(page as string);
@@ -1914,33 +2129,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const offset = (pageNum - 1) * limitNum;
 
       // Build the base query
-      let quotesQuery = supabase
-        .from("quotes")
-        .select("*", { count: "exact" });
+      let quotesQuery = supabase.from("quotes").select("*", { count: "exact" });
 
       // Enhanced search - now can search by business name, engineer name, contact, location
       if (search) {
         quotesQuery = quotesQuery.or(
           `id.eq.${isNaN(Number(search)) ? 0 : search},` +
-          `job_id.eq.${isNaN(Number(search)) ? 0 : search},` +
-          `business_name.ilike.%${search}%,` +
-          `eng_name.ilike.%${search}%,` +
-          `site_contact_name.ilike.%${search}%,` +
-          `site_location.ilike.%${search}%`
+            `job_id.eq.${isNaN(Number(search)) ? 0 : search},` +
+            `business_name.ilike.%${search}%,` +
+            `eng_name.ilike.%${search}%,` +
+            `site_contact_name.ilike.%${search}%,` +
+            `site_location.ilike.%${search}%`
         );
       }
 
       // Apply status filter if provided
-      if (status && status !== 'all') {
-        quotesQuery = quotesQuery.eq('status', status);
+      if (status && status !== "all") {
+        quotesQuery = quotesQuery.eq("status", status);
       }
 
       // Apply pricing status filter if provided
       if (pricingStatus) {
-        if (pricingStatus === 'priced') {
-          quotesQuery = quotesQuery.not('p_prices', 'is', null);
-        } else if (pricingStatus === 'pending') {
-          quotesQuery = quotesQuery.is('p_prices', null);
+        if (pricingStatus === "priced") {
+          quotesQuery = quotesQuery.not("p_prices", "is", null);
+        } else if (pricingStatus === "pending") {
+          quotesQuery = quotesQuery.is("p_prices", null);
         }
       }
 
@@ -1962,13 +2175,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Transform data to add calculated fields
-      const transformedData = (data || []).map(quote => {
+      const transformedData = (data || []).map((quote) => {
         // Calculate total price if p_prices exists
         let totalPrice = null;
         if (quote.p_prices) {
-          const visitFee = parseFloat(quote.p_prices.visit_fee || '0');
-          const productsTotal = (quote.p_prices.product_prices || []).reduce((sum: number, item: any) =>
-            sum + parseFloat(item.price || '0'), 0);
+          const visitFee = parseFloat(quote.p_prices.visit_fee || "0");
+          const productsTotal = (quote.p_prices.product_prices || []).reduce(
+            (sum: number, item: any) => sum + parseFloat(item.price || "0"),
+            0
+          );
           totalPrice = visitFee + productsTotal;
         }
 
@@ -1976,7 +2191,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ...quote,
           total_price: totalPrice,
           products_count: quote.products?.length || 0,
-          has_pricing: quote.p_prices !== null
+          has_pricing: quote.p_prices !== null,
         };
       });
 
@@ -1992,8 +2207,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           total: totalCount || 0,
           totalPages,
           hasNextPage: pageNum < totalPages,
-          hasPreviousPage: pageNum > 1
-        }
+          hasPreviousPage: pageNum > 1,
+        },
       });
     } catch (err) {
       console.error("Error in /api/quotes:", err);
@@ -2034,7 +2249,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           throw updateError;
         }
 
-
         // Send to n8n webhook (non-blocking)
         const webhookUrl =
           "https://keptcoldhvac.app.n8n.cloud/webhook/quote-sent";
@@ -2049,7 +2263,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.error(
               "Webhook failed:",
               webhookResponse.status,
-              webhookResponse.statusText,
+              webhookResponse.statusText
             );
           } else {
             console.log("✅ Webhook sent successfully to:", webhookUrl);
@@ -2070,12 +2284,499 @@ export async function registerRoutes(app: Express): Promise<Server> {
           error: "Failed to update quote",
         });
       }
-    },
+    }
   );
 
-  ///////////////////////////=====================================serever is runnning check api 
-  app.get('/health', (req, res) => {
-    res.send('Server is running');
+  /* ===========================
+     GET UNSCHEDULED JOBS (CUSTOMERS WITH STATUS='NEW') - ADMIN ONLY
+  ============================*/
+  app.get(
+    "/api/customers/unscheduled",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        const { date, priority } = req.query;
+
+        let query = supabase
+          .from("customers")
+          .select("*")
+          .eq("status", "new")
+          .order("Priority", { ascending: true })
+          .order("scheduled_time", { ascending: true });
+
+        // Filter by date if provided
+        if (date) {
+          const startOfDay = new Date(date as string);
+          startOfDay.setHours(0, 0, 0, 0);
+          const endOfDay = new Date(date as string);
+          endOfDay.setHours(23, 59, 59, 999);
+
+          query = query
+            .gte("scheduled_time", startOfDay.toISOString())
+            .lte("scheduled_time", endOfDay.toISOString());
+        }
+
+        // Filter by priority if provided
+        if (priority) {
+          query = query.eq("Priority", priority);
+        }
+
+        const { data: customers, error } = await query;
+
+        if (error) {
+          console.error("Error fetching unscheduled jobs:", error);
+          return res.status(400).json({ error: error.message });
+        }
+
+        // Transform to Job format
+        const jobs = (customers || []).map((customer) => ({
+          id: customer.id.toString(),
+          reference: `JOB-${customer.id}`,
+          clientName: customer.Business_Name,
+          address: customer.Site_Location,
+          latitude: customer.latitude,
+          longitude: customer.longitude,
+          duration: 120, // Default 2 hours, can be customized
+          priority: customer.Priority?.toLowerCase() || "normal",
+          postCode: customer.Post_Code,
+          openingHours: customer.Opening_Hours,
+          description: customer.Description_of_Fault,
+          scheduledTime: customer.scheduled_time,
+        }));
+
+        console.log(`✅ Fetched ${jobs.length} unscheduled jobs`);
+        res.json({ jobs });
+      } catch (err) {
+        console.error("Error in /api/customers/unscheduled:", err);
+        res.status(500).json({ error: "Failed to fetch unscheduled jobs" });
+      }
+    }
+  );
+
+  /* ===========================
+     GET ACTIVE ENGINEERS - ADMIN ONLY
+  ============================*/
+  app.get(
+    "/api/engineers/active",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        const { data: engineers, error } = await supabase
+          .from("engineers")
+          .select("*")
+          .order("eng_name", { ascending: true });
+
+        if (error) {
+          console.error("Error fetching engineers:", error);
+          return res.status(400).json({ error: error.message });
+        }
+
+        console.log(`✅ Fetched ${engineers?.length || 0} engineers`);
+        res.json({ engineers: engineers || [] });
+      } catch (err) {
+        console.error("Error in /api/engineers/active:", err);
+        res.status(500).json({ error: "Failed to fetch engineers" });
+      }
+    }
+  );
+
+  /* ===========================
+     OPTIMIZE ROUTE USING GOOGLE MAPS DIRECTIONS API - ADMIN ONLY
+  ============================*/
+  app.post(
+    "/api/routes/optimize",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        const {
+          engineer_id,
+          job_ids,
+          start_time,
+          end_time,
+          max_stops,
+          optimize_by,
+          consider_traffic,
+        } = req.body;
+
+        if (!engineer_id || !job_ids || job_ids.length === 0) {
+          return res.status(400).json({
+            error: "engineer_id and job_ids are required",
+          });
+        }
+
+        // Fetch engineer location
+        const { data: engineer, error: engineerError } = await supabase
+          .from("engineers")
+          .select("latitude, longitude, eng_name")
+          .eq("id", engineer_id)
+          .single();
+
+        if (engineerError || !engineer) {
+          return res.status(404).json({ error: "Engineer not found" });
+        }
+
+        if (!engineer.latitude || !engineer.longitude) {
+          return res.status(400).json({
+            error:
+              "Engineer location not available. Please update engineer's GPS location.",
+          });
+        }
+
+        // Fetch job locations from customers table
+        const { data: customers, error: customersError } = await supabase
+          .from("customers")
+          .select("*")
+          .in("id", job_ids.map(Number));
+
+        if (customersError || !customers || customers.length === 0) {
+          return res.status(404).json({ error: "Jobs not found" });
+        }
+
+        // Filter jobs with valid coordinates
+        const validJobs = customers.filter((c) => c.latitude && c.longitude);
+
+        if (validJobs.length === 0) {
+          return res.status(400).json({
+            error:
+              "No jobs have valid coordinates. Please geocode addresses first.",
+          });
+        }
+
+        // Apply max stops limit
+        let jobsToOptimize = validJobs;
+        if (max_stops && validJobs.length > max_stops) {
+          // Sort by priority first
+          const priorityOrder: { [key: string]: number } = {
+            urgent: 0,
+            high: 1,
+            normal: 2,
+          };
+          jobsToOptimize = validJobs
+            .sort(
+              (a, b) =>
+                (priorityOrder[a.Priority?.toLowerCase()] || 3) -
+                (priorityOrder[b.Priority?.toLowerCase()] || 3)
+            )
+            .slice(0, max_stops);
+        }
+
+        console.log(
+          `🚀 Optimizing route for ${engineer.eng_name} with ${jobsToOptimize.length} jobs`
+        );
+
+        // Build waypoints for Google Directions API
+        const waypoints = jobsToOptimize
+          .map((job) => `${job.latitude},${job.longitude}`)
+          .join("|");
+
+        const origin = `${engineer.latitude},${engineer.longitude}`;
+        const apiKey = process.env.VITE_GOOGLE_MAPS_API_KEY;
+
+        // Call Google Maps Directions API
+        const url =
+          `https://maps.googleapis.com/maps/api/directions/json?` +
+          `origin=${origin}&` +
+          `destination=${origin}&` + // Round trip
+          `waypoints=${
+            optimize_by === "priority" ? "" : "optimize:true|"
+          }${waypoints}&` +
+          `mode=driving&` +
+          `departure_time=${consider_traffic ? "now" : ""}&` +
+          `traffic_model=${consider_traffic ? "best_guess" : ""}&` +
+          `key=${apiKey}`;
+
+        const googleResponse = await fetch(url);
+        const googleData = (await googleResponse.json()) as any;
+
+        if (googleData.status !== "OK") {
+          console.error("Google Maps API error:", googleData);
+          return res.status(400).json({
+            error: `Route optimization failed: ${googleData.status}`,
+            details: googleData.error_message,
+          });
+        }
+
+        const route = googleData.routes[0];
+        const legs = route.legs;
+        const optimizedOrder = route.waypoint_order || [];
+
+        // Reorder jobs based on Google's optimization
+        let orderedJobs = jobsToOptimize;
+        if (optimizedOrder.length > 0 && optimize_by !== "priority") {
+          orderedJobs = optimizedOrder.map(
+            (index: number) => jobsToOptimize[index]
+          );
+        }
+
+        // Calculate arrival/departure times
+        const [startHour, startMinute] = start_time.split(":").map(Number);
+        let currentMinutes = startHour * 60 + startMinute;
+
+        const optimizedJobs = orderedJobs.map((job, index) => {
+          const leg = legs[index];
+          const travelTime = Math.ceil((leg.duration?.value || 0) / 60); // seconds to minutes
+          const distance = leg.distance?.value || 0; // meters
+
+          currentMinutes += travelTime;
+          const arrivalTime = `${Math.floor(currentMinutes / 60)
+            .toString()
+            .padStart(2, "0")}:${(currentMinutes % 60)
+            .toString()
+            .padStart(2, "0")}`;
+
+          const jobDuration = 120; // Default 2 hours
+          const departureTime = `${Math.floor(
+            (currentMinutes + jobDuration) / 60
+          )
+            .toString()
+            .padStart(2, "0")}:${((currentMinutes + jobDuration) % 60)
+            .toString()
+            .padStart(2, "0")}`;
+
+          currentMinutes += jobDuration;
+
+          return {
+            id: job.id.toString(),
+            reference: `JOB-${job.id}`,
+            clientName: job.Business_Name,
+            address: job.Site_Location,
+            latitude: job.latitude,
+            longitude: job.longitude,
+            duration: jobDuration,
+            priority: job.Priority?.toLowerCase() || "normal",
+            arrivalTime,
+            departureTime,
+            order: index + 1,
+            travelTimeFromPrevious: travelTime,
+            distanceFromPrevious: distance,
+          };
+        });
+
+        // Calculate totals
+        const totalDistance = legs.reduce(
+          (sum: number, leg: any) => sum + (leg.distance?.value || 0),
+          0
+        );
+        const totalTravelTime = legs.reduce(
+          (sum: number, leg: any) =>
+            sum + Math.ceil((leg.duration?.value || 0) / 60),
+          0
+        );
+        const totalJobTime = optimizedJobs.length * 120; // 2 hours per job
+        const totalTime = totalTravelTime + totalJobTime;
+
+        const estimatedFinishMinutes = startHour * 60 + startMinute + totalTime;
+        const estimatedFinish = `${Math.floor(estimatedFinishMinutes / 60)
+          .toString()
+          .padStart(2, "0")}:${(estimatedFinishMinutes % 60)
+          .toString()
+          .padStart(2, "0")}`;
+
+        console.log(
+          `✅ Route optimized: ${optimizedJobs.length} stops, ${(
+            totalDistance / 1000
+          ).toFixed(1)}km, finish at ${estimatedFinish}`
+        );
+
+        res.json({
+          optimizedJobs,
+          totalDistance,
+          totalTime,
+          estimatedFinish,
+          polyline: route.overview_polyline?.points,
+        });
+      } catch (err) {
+        console.error("Error in /api/routes/optimize:", err);
+        res.status(500).json({ error: "Route optimization failed" });
+      }
+    }
+  );
+
+  /* ===========================
+     ASSIGN OPTIMIZED ROUTE TO ENGINEER - ADMIN ONLY
+  ============================*/
+  app.post(
+    "/api/routes/assign",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        const { engineer_id, date, jobs, total_distance, total_time } =
+          req.body;
+
+        if (!engineer_id || !jobs || jobs.length === 0) {
+          return res.status(400).json({
+            error: "engineer_id and jobs are required",
+          });
+        }
+
+        // Fetch engineer details
+        const { data: engineer, error: engineerError } = await supabase
+          .from("engineers")
+          .select("eng_name")
+          .eq("id", engineer_id)
+          .single();
+
+        if (engineerError || !engineer) {
+          return res.status(404).json({ error: "Engineer not found" });
+        }
+
+        const assignedJobs = [];
+        const errors = [];
+
+        // Process each job in the route
+        for (const job of jobs) {
+          try {
+            const customerId = parseInt(job.customer_id || job.id);
+
+            // Fetch customer details
+            const { data: customer, error: customerError } = await supabase
+              .from("customers")
+              .select("*")
+              .eq("id", customerId)
+              .single();
+
+            if (customerError || !customer) {
+              errors.push({
+                customer_id: customerId,
+                error: "Customer not found",
+              });
+              continue;
+            }
+
+            // Create scheduled time from date and arrival time
+            const scheduledDateTime = new Date(
+              `${date}T${job.arrival_time}:00`
+            );
+
+            // Insert into jobs table
+            const { data: newJob, error: jobError } = await supabase
+              .from("jobs")
+              .insert({
+                customer_id: customerId,
+                engineer_uuid: engineer_id,
+                engineer_name: engineer.eng_name,
+                description: customer.Description_of_Fault || "Assigned job",
+                site_location: customer.Site_Location,
+                customer_latitude: customer.latitude || 0,
+                customer_longitude: customer.longitude || 0,
+                site_contact_naame: customer.Site_Contact_Name,
+                site_contact_number: customer.Site_Contact_Number,
+                open_time: customer.Opening_Hours || "N/A",
+                business_name: customer.Business_Name,
+                System_Details: customer.System_Details || "N/A",
+                schedule_time: scheduledDateTime.toISOString(),
+                job_status: "Assigned",
+              })
+              .select()
+              .single();
+
+            if (jobError) {
+              errors.push({ customer_id: customerId, error: jobError.message });
+              continue;
+            }
+
+            // Update customer status
+            const { error: customerUpdateError } = await supabase
+              .from("customers")
+              .update({
+                status: "assigned",
+                assigned_engineer: engineer_id,
+                scheduled_time: scheduledDateTime.toISOString(),
+              })
+              .eq("id", customerId);
+
+            if (customerUpdateError) {
+              console.error(
+                `Failed to update customer ${customerId}:`,
+                customerUpdateError
+              );
+            }
+
+            assignedJobs.push(newJob);
+          } catch (err) {
+            console.error(`Error assigning job ${job.customer_id}:`, err);
+            errors.push({
+              customer_id: job.customer_id,
+              error: err instanceof Error ? err.message : "Unknown error",
+            });
+          }
+        }
+
+        console.log(
+          `✅ Route assigned: ${assignedJobs.length} jobs assigned to ${engineer.eng_name}`
+        );
+
+        res.json({
+          success: true,
+          jobs_assigned: assignedJobs.length,
+          total_jobs: jobs.length,
+          assigned_jobs: assignedJobs,
+          errors: errors.length > 0 ? errors : undefined,
+        });
+      } catch (err) {
+        console.error("Error in /api/routes/assign:", err);
+        res.status(500).json({ error: "Route assignment failed" });
+      }
+    }
+  );
+
+  /* ===========================
+     UPDATE ENGINEER LOCATION - ENGINEER AUTH REQUIRED
+     Updates engineer's latitude and longitude in the database
+  ============================*/
+  app.put("/api/engineers/:id/location", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { latitude, longitude } = req.body;
+
+      // Validate coordinates
+      if (
+        typeof latitude !== "number" ||
+        typeof longitude !== "number" ||
+        latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid coordinates. Latitude must be -90 to 90, longitude -180 to 180",
+        });
+      }
+
+      // Update engineer location in database
+      const { data: updatedEngineer, error } = await supabase
+        .from("engineers")
+        .update({
+          latitude,
+          longitude,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error updating engineer location:", error);
+        return res.status(400).json({ error: error.message });
+      }
+
+      console.log(
+        `📍 Updated location for engineer ${id}: [${latitude}, ${longitude}]`
+      );
+      res.json({
+        success: true,
+        engineer: updatedEngineer,
+        message: "Location updated successfully",
+      });
+    } catch (err) {
+      console.error("Error in PUT /api/engineers/:id/location:", err);
+      res.status(500).json({ error: "Failed to update engineer location" });
+    }
+  });
+
+  ///////////////////////////=====================================serever is runnning check api
+  app.get("/health", (req, res) => {
+    res.send("Server is running");
   });
 
   /* ===========================
@@ -2141,283 +2842,291 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
-
-
   /* ===========================
      ENGINEERS MANAGEMENT - ADMIN ONLY
   ============================*/
 
   // GET all engineers with pagination and search
-  app.get("/api/engineers", requireAdminAuth, async (req: AdminRequest, res) => {
-    try {
-      const {
-        page = '1',
-        limit = '10',
-        search = '',
-        status = ''
-      } = req.query;
+  app.get(
+    "/api/engineers",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        const {
+          page = "1",
+          limit = "10",
+          search = "",
+          status = "",
+        } = req.query;
 
-      const pageNum = parseInt(page as string);
-      const limitNum = parseInt(limit as string);
-      const offset = (pageNum - 1) * limitNum;
+        const pageNum = parseInt(page as string);
+        const limitNum = parseInt(limit as string);
+        const offset = (pageNum - 1) * limitNum;
 
-      // Build the base query
-      let engineersQuery = supabase
-        .from("engineers")
-        .select("*", { count: 'exact' });
+        // Build the base query
+        let engineersQuery = supabase
+          .from("engineers")
+          .select("*", { count: "exact" });
 
-      // Apply search filter if provided
-      if (search) {
-        engineersQuery = engineersQuery.or(
-          `eng_name.ilike.%${search}%,email.ilike.%${search}%,area.ilike.%${search}%,speciality.ilike.%${search}%`
-        );
-      }
-
-      // Apply status filter if provided
-      if (status && status !== 'all') {
-        engineersQuery = engineersQuery.eq('working_status', status);
-      }
-
-      // Get total count first
-      const { count: totalCount } = await engineersQuery;
-
-      // Now get paginated results
-      const { data, error } = await engineersQuery
-        .order("created_at", { ascending: false })
-        .range(offset, offset + limitNum - 1);
-
-      if (error) {
-        console.error("Error fetching engineers:", error);
-        return res.status(500).json({ error: error.message });
-      }
-
-      // Calculate pagination metadata
-      const totalPages = Math.ceil((totalCount || 0) / limitNum);
-
-      res.json({
-        data: data || [],
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total: totalCount || 0,
-          totalPages,
-          hasNextPage: pageNum < totalPages,
-          hasPreviousPage: pageNum > 1
+        // Apply search filter if provided
+        if (search) {
+          engineersQuery = engineersQuery.or(
+            `eng_name.ilike.%${search}%,email.ilike.%${search}%,area.ilike.%${search}%,speciality.ilike.%${search}%`
+          );
         }
-      });
-    } catch (err) {
-      console.error("Error in /api/engineers:", err);
-      res.status(500).json({ error: "Failed to fetch engineers" });
+
+        // Apply status filter if provided
+        if (status && status !== "all") {
+          engineersQuery = engineersQuery.eq("working_status", status);
+        }
+
+        // Get total count first
+        const { count: totalCount } = await engineersQuery;
+
+        // Now get paginated results
+        const { data, error } = await engineersQuery
+          .order("created_at", { ascending: false })
+          .range(offset, offset + limitNum - 1);
+
+        if (error) {
+          console.error("Error fetching engineers:", error);
+          return res.status(500).json({ error: error.message });
+        }
+
+        // Calculate pagination metadata
+        const totalPages = Math.ceil((totalCount || 0) / limitNum);
+
+        res.json({
+          data: data || [],
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total: totalCount || 0,
+            totalPages,
+            hasNextPage: pageNum < totalPages,
+            hasPreviousPage: pageNum > 1,
+          },
+        });
+      } catch (err) {
+        console.error("Error in /api/engineers:", err);
+        res.status(500).json({ error: "Failed to fetch engineers" });
+      }
     }
-  });
+  );
 
   // CREATE new engineer
-  app.post("/api/engineers", requireAdminAuth, async (req: AdminRequest, res) => {
-    try {
-      const {
-        email,
-        password,
-        eng_name,
-        speciality,
-        area,
-        working_status,
-        work_start_time,
-        work_end_time,
-        latitude,
-        longitude
-      } = req.body;
-
-      // Validate required fields
-      if (!email || !password || !eng_name || !speciality || !area) {
-        return res.status(400).json({
-          error: "Missing required fields",
-          required: ["email", "password", "eng_name", "speciality", "area"]
-        });
-      }
-
-      // Format times with timezone
-      const formatTimeWithTimezone = (time: string) => {
-        if (!time) return null;
-        return time.includes(':') ? `${time}:00+00:00` : `${time}+00:00`;
-      };
-
-      // Create auth user
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-      });
-
-      if (authError || !authData.user) {
-        return res.status(400).json({
-          error: authError?.message || "Failed to create account"
-        });
-      }
-
-      // Insert engineer record
-      const { data: engineerData, error: engineerError } = await supabase
-        .from("engineers")
-        .insert({
-          id: authData.user.id,
+  app.post(
+    "/api/engineers",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        const {
           email,
+          password,
           eng_name,
           speciality,
           area,
-          working_status: working_status || 'active',
-          work_start_time: formatTimeWithTimezone(work_start_time),
-          work_end_time: formatTimeWithTimezone(work_end_time),
-          latitude: latitude || null,
-          longitude: longitude || null
-        })
-        .select()
-        .single();
+          working_status,
+          work_start_time,
+          work_end_time,
+          latitude,
+          longitude,
+        } = req.body;
 
-      if (engineerError) {
-        console.error("Engineer insert error:", engineerError);
-        // Rollback: delete auth user
-        await supabase.auth.admin.deleteUser(authData.user.id);
-        return res.status(400).json({
-          error: engineerError.message,
-          details: engineerError.details,
+        // Validate required fields
+        if (!email || !password || !eng_name || !speciality || !area) {
+          return res.status(400).json({
+            error: "Missing required fields",
+            required: ["email", "password", "eng_name", "speciality", "area"],
+          });
+        }
+
+        // Format times with timezone
+        const formatTimeWithTimezone = (time: string) => {
+          if (!time) return null;
+          return time.includes(":") ? `${time}:00+00:00` : `${time}+00:00`;
+        };
+
+        // Create auth user
+        const { data: authData, error: authError } =
+          await supabase.auth.admin.createUser({
+            email,
+            password,
+            email_confirm: true,
+          });
+
+        if (authError || !authData.user) {
+          return res.status(400).json({
+            error: authError?.message || "Failed to create account",
+          });
+        }
+
+        // Insert engineer record
+        const { data: engineerData, error: engineerError } = await supabase
+          .from("engineers")
+          .insert({
+            id: authData.user.id,
+            email,
+            eng_name,
+            speciality,
+            area,
+            working_status: working_status || "active",
+            work_start_time: formatTimeWithTimezone(work_start_time),
+            work_end_time: formatTimeWithTimezone(work_end_time),
+            latitude: latitude || null,
+            longitude: longitude || null,
+          })
+          .select()
+          .single();
+
+        if (engineerError) {
+          console.error("Engineer insert error:", engineerError);
+          // Rollback: delete auth user
+          await supabase.auth.admin.deleteUser(authData.user.id);
+          return res.status(400).json({
+            error: engineerError.message,
+            details: engineerError.details,
+          });
+        }
+
+        res.json({
+          success: true,
+          message: "Engineer created successfully",
+          engineer: engineerData,
         });
+      } catch (err) {
+        console.error("Error creating engineer:", err);
+        res.status(500).json({ error: "Failed to create engineer" });
       }
-
-      res.json({
-        success: true,
-        message: "Engineer created successfully",
-        engineer: engineerData,
-      });
-    } catch (err) {
-      console.error("Error creating engineer:", err);
-      res.status(500).json({ error: "Failed to create engineer" });
     }
-  });
+  );
 
   // UPDATE engineer
-  app.patch("/api/engineers/:id", requireAdminAuth, async (req: AdminRequest, res) => {
-    try {
-      const { id } = req.params;
-      const {
-        eng_name,
-        email,
-        speciality,
-        area,
-        working_status,
-        work_start_time,
-        work_end_time,
-        latitude,
-        longitude
-      } = req.body;
+  app.patch(
+    "/api/engineers/:id",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        const { id } = req.params;
+        const {
+          eng_name,
+          email,
+          speciality,
+          area,
+          working_status,
+          work_start_time,
+          work_end_time,
+          latitude,
+          longitude,
+        } = req.body;
 
-      // Format times with timezone if provided
-      const formatTimeWithTimezone = (time: string | undefined) => {
-        if (!time) return undefined;
-        return time.includes(':') ? `${time}:00+00:00` : `${time}+00:00`;
-      };
+        // Format times with timezone if provided
+        const formatTimeWithTimezone = (time: string | undefined) => {
+          if (!time) return undefined;
+          return time.includes(":") ? `${time}:00+00:00` : `${time}+00:00`;
+        };
 
-      const updateData: any = {};
-      if (eng_name !== undefined) updateData.eng_name = eng_name;
-      if (email !== undefined) updateData.email = email;
-      if (speciality !== undefined) updateData.speciality = speciality;
-      if (area !== undefined) updateData.area = area;
-      if (working_status !== undefined) updateData.working_status = working_status;
-      if (work_start_time !== undefined) updateData.work_start_time = formatTimeWithTimezone(work_start_time);
-      if (work_end_time !== undefined) updateData.work_end_time = formatTimeWithTimezone(work_end_time);
-      if (latitude !== undefined) updateData.latitude = latitude;
-      if (longitude !== undefined) updateData.longitude = longitude;
+        const updateData: any = {};
+        if (eng_name !== undefined) updateData.eng_name = eng_name;
+        if (email !== undefined) updateData.email = email;
+        if (speciality !== undefined) updateData.speciality = speciality;
+        if (area !== undefined) updateData.area = area;
+        if (working_status !== undefined)
+          updateData.working_status = working_status;
+        if (work_start_time !== undefined)
+          updateData.work_start_time = formatTimeWithTimezone(work_start_time);
+        if (work_end_time !== undefined)
+          updateData.work_end_time = formatTimeWithTimezone(work_end_time);
+        if (latitude !== undefined) updateData.latitude = latitude;
+        if (longitude !== undefined) updateData.longitude = longitude;
 
-      const { data, error } = await supabase
-        .from("engineers")
-        .update(updateData)
-        .eq("id", id)
-        .select()
-        .single();
+        const { data, error } = await supabase
+          .from("engineers")
+          .update(updateData)
+          .eq("id", id)
+          .select()
+          .single();
 
-      if (error) {
-        console.error("Error updating engineer:", error);
-        return res.status(400).json({ error: error.message });
-      }
-
-      // Update auth email if changed
-      if (email) {
-        const { error: authError } = await supabase.auth.admin.updateUserById(
-          id,
-          { email }
-        );
-
-        if (authError) {
-          console.error("Error updating auth email:", authError);
+        if (error) {
+          console.error("Error updating engineer:", error);
+          return res.status(400).json({ error: error.message });
         }
-      }
 
-      res.json({
-        success: true,
-        message: "Engineer updated successfully",
-        engineer: data,
-      });
-    } catch (err) {
-      console.error("Error updating engineer:", err);
-      res.status(500).json({ error: "Failed to update engineer" });
+        // Update auth email if changed
+        if (email) {
+          const { error: authError } = await supabase.auth.admin.updateUserById(
+            id,
+            { email }
+          );
+
+          if (authError) {
+            console.error("Error updating auth email:", authError);
+          }
+        }
+
+        res.json({
+          success: true,
+          message: "Engineer updated successfully",
+          engineer: data,
+        });
+      } catch (err) {
+        console.error("Error updating engineer:", err);
+        res.status(500).json({ error: "Failed to update engineer" });
+      }
     }
-  });
+  );
 
   // DELETE engineer
-  app.delete("/api/engineers/:id", requireAdminAuth, async (req: AdminRequest, res) => {
-    try {
-      const { id } = req.params;
+  app.delete(
+    "/api/engineers/:id",
+    requireAdminAuth,
+    async (req: AdminRequest, res) => {
+      try {
+        const { id } = req.params;
 
-      // Check if engineer has active jobs
-      const { count: activeJobs } = await supabase
-        .from("jobs")
-        .select("*", { count: 'exact', head: true })
-        .eq("engineer_uuid", id)
-        .in("job_status", ["Assigned", "In Progress", "Quoted", "Working"]);
+        // Check if engineer has active jobs
+        const { count: activeJobs } = await supabase
+          .from("jobs")
+          .select("*", { count: "exact", head: true })
+          .eq("engineer_uuid", id)
+          .in("job_status", ["Assigned", "In Progress", "Quoted", "Working"]);
 
-      if (activeJobs && activeJobs > 0) {
-        return res.status(400).json({
-          error: "Cannot delete engineer with active jobs",
-          activeJobs
+        if (activeJobs && activeJobs > 0) {
+          return res.status(400).json({
+            error: "Cannot delete engineer with active jobs",
+            activeJobs,
+          });
+        }
+
+        // Delete engineer record
+        const { error: deleteError } = await supabase
+          .from("engineers")
+          .delete()
+          .eq("id", id);
+
+        if (deleteError) {
+          console.error("Error deleting engineer:", deleteError);
+          return res.status(400).json({ error: deleteError.message });
+        }
+
+        // Delete auth user
+        const { error: authError } = await supabase.auth.admin.deleteUser(id);
+
+        if (authError) {
+          console.error("Error deleting auth user:", authError);
+        }
+
+        res.json({
+          success: true,
+          message: "Engineer deleted successfully",
         });
+      } catch (err) {
+        console.error("Error deleting engineer:", err);
+        res.status(500).json({ error: "Failed to delete engineer" });
       }
-
-      // Delete engineer record
-      const { error: deleteError } = await supabase
-        .from("engineers")
-        .delete()
-        .eq("id", id);
-
-      if (deleteError) {
-        console.error("Error deleting engineer:", deleteError);
-        return res.status(400).json({ error: deleteError.message });
-      }
-
-      // Delete auth user
-      const { error: authError } = await supabase.auth.admin.deleteUser(id);
-
-      if (authError) {
-        console.error("Error deleting auth user:", authError);
-      }
-
-      res.json({
-        success: true,
-        message: "Engineer deleted successfully",
-      });
-    } catch (err) {
-      console.error("Error deleting engineer:", err);
-      res.status(500).json({ error: "Failed to delete engineer" });
     }
-  });
-
-
+  );
 
   const httpServer = createServer(app);
   return httpServer;
 }
-
-
-
-
-
-
-
