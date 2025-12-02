@@ -630,8 +630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // ✅ STEP 2: No cached data - call Google Geocoding API
       console.log(
-        `🌍 Geocoding address for customer ${
-          customer_id || "unknown"
+        `🌍 Geocoding address for customer ${customer_id || "unknown"
         }: ${address}, ${postcode}`
       );
 
@@ -799,8 +798,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Apply search filter if provided
         if (search) {
           customersQuery = customersQuery.or(
-            `Business_Name.ilike.%${search}%,Site_Location.ilike.%${search}%,id.eq.${
-              isNaN(Number(search)) ? 0 : search
+            `Business_Name.ilike.%${search}%,Site_Location.ilike.%${search}%,id.eq.${isNaN(Number(search)) ? 0 : search
             }`
           );
         }
@@ -2042,8 +2040,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Apply search filter if provided
       if (search) {
         invoicesQuery = invoicesQuery.or(
-          `id.eq.${isNaN(Number(search)) ? 0 : search},job_id.eq.${
-            isNaN(Number(search)) ? 0 : search
+          `id.eq.${isNaN(Number(search)) ? 0 : search},job_id.eq.${isNaN(Number(search)) ? 0 : search
           },customer_id.eq.${isNaN(Number(search)) ? 0 : search}`
         );
       }
@@ -2135,11 +2132,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (search) {
         quotesQuery = quotesQuery.or(
           `id.eq.${isNaN(Number(search)) ? 0 : search},` +
-            `job_id.eq.${isNaN(Number(search)) ? 0 : search},` +
-            `business_name.ilike.%${search}%,` +
-            `eng_name.ilike.%${search}%,` +
-            `site_contact_name.ilike.%${search}%,` +
-            `site_location.ilike.%${search}%`
+          `job_id.eq.${isNaN(Number(search)) ? 0 : search},` +
+          `business_name.ilike.%${search}%,` +
+          `eng_name.ilike.%${search}%,` +
+          `site_contact_name.ilike.%${search}%,` +
+          `site_location.ilike.%${search}%`
         );
       }
 
@@ -2391,11 +2388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const {
           engineer_id,
           job_ids,
-          start_time,
-          end_time,
-          max_stops,
-          optimize_by,
-          consider_traffic,
+          consider_traffic = true,
         } = req.body;
 
         if (!engineer_id || !job_ids || job_ids.length === 0) {
@@ -2422,7 +2415,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
-        // Fetch job locations from customers table
+        // Fetch job locations
         const { data: customers, error: customersError } = await supabase
           .from("customers")
           .select("*")
@@ -2442,48 +2435,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
-        // Apply max stops limit
-        let jobsToOptimize = validJobs;
-        if (max_stops && validJobs.length > max_stops) {
-          // Sort by priority first
-          const priorityOrder: { [key: string]: number } = {
-            urgent: 0,
-            high: 1,
-            normal: 2,
-          };
-          jobsToOptimize = validJobs
-            .sort(
-              (a, b) =>
-                (priorityOrder[a.Priority?.toLowerCase()] || 3) -
-                (priorityOrder[b.Priority?.toLowerCase()] || 3)
-            )
-            .slice(0, max_stops);
+        // IMPORTANT: Maintain the order from job_ids array
+        const orderedJobs = [];
+        for (const jobId of job_ids) {
+          const job = validJobs.find(j => parseInt(j.id) === jobId);
+          if (job) {
+            orderedJobs.push(job);
+          }
         }
 
         console.log(
-          `🚀 Optimizing route for ${engineer.eng_name} with ${jobsToOptimize.length} jobs`
+          `🚀 Calculating route for ${engineer.eng_name} with ${orderedJobs.length} jobs`
         );
 
         // Build waypoints for Google Directions API
-        const waypoints = jobsToOptimize
+        const waypoints = orderedJobs
           .map((job) => `${job.latitude},${job.longitude}`)
           .join("|");
 
         const origin = `${engineer.latitude},${engineer.longitude}`;
         const apiKey = process.env.VITE_GOOGLE_MAPS_API_KEY;
 
-        // Call Google Maps Directions API
-        const url =
-          `https://maps.googleapis.com/maps/api/directions/json?` +
-          `origin=${origin}&` +
-          `destination=${origin}&` + // Round trip
-          `waypoints=${
-            optimize_by === "priority" ? "" : "optimize:true|"
-          }${waypoints}&` +
-          `mode=driving&` +
-          `departure_time=${consider_traffic ? "now" : ""}&` +
-          `traffic_model=${consider_traffic ? "best_guess" : ""}&` +
-          `key=${apiKey}`;
+        // CRITICAL CHANGE: Use LAST job as destination, not origin (no round trip!)
+        const lastJob = orderedJobs[orderedJobs.length - 1];
+        const destination = `${lastJob.latitude},${lastJob.longitude}`;
+
+        // For single job, use it as both waypoint and destination
+        let url;
+        if (orderedJobs.length === 1) {
+          // Single job - direct route from engineer to job
+          url =
+            `https://maps.googleapis.com/maps/api/directions/json?` +
+            `origin=${origin}&` +
+            `destination=${destination}&` +
+            `mode=driving&` +
+            `departure_time=${consider_traffic ? "now" : ""}&` +
+            `traffic_model=${consider_traffic ? "best_guess" : ""}&` +
+            `key=${apiKey}`;
+        } else {
+          // Multiple jobs - route through waypoints to last job
+          const intermediateWaypoints = orderedJobs
+            .slice(0, -1) // All except last job
+            .map((job) => `${job.latitude},${job.longitude}`)
+            .join("|");
+
+          url =
+            `https://maps.googleapis.com/maps/api/directions/json?` +
+            `origin=${origin}&` +
+            `destination=${destination}&` +
+            `waypoints=${intermediateWaypoints}&` + // Waypoints (excluding last job)
+            `mode=driving&` +
+            `departure_time=${consider_traffic ? "now" : ""}&` +
+            `traffic_model=${consider_traffic ? "best_guess" : ""}&` +
+            `key=${apiKey}`;
+        }
 
         const googleResponse = await fetch(url);
         const googleData = (await googleResponse.json()) as any;
@@ -2491,49 +2496,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (googleData.status !== "OK") {
           console.error("Google Maps API error:", googleData);
           return res.status(400).json({
-            error: `Route optimization failed: ${googleData.status}`,
+            error: `Route calculation failed: ${googleData.status}`,
             details: googleData.error_message,
           });
         }
 
         const route = googleData.routes[0];
         const legs = route.legs;
-        const optimizedOrder = route.waypoint_order || [];
 
-        // Reorder jobs based on Google's optimization
-        let orderedJobs = jobsToOptimize;
-        if (optimizedOrder.length > 0 && optimize_by !== "priority") {
-          orderedJobs = optimizedOrder.map(
-            (index: number) => jobsToOptimize[index]
-          );
-        }
-
-        // Calculate arrival/departure times
-        const [startHour, startMinute] = start_time.split(":").map(Number);
-        let currentMinutes = startHour * 60 + startMinute;
-
+        // Calculate distances only (no time estimates)
         const optimizedJobs = orderedJobs.map((job, index) => {
           const leg = legs[index];
-          const travelTime = Math.ceil((leg.duration?.value || 0) / 60); // seconds to minutes
-          const distance = leg.distance?.value || 0; // meters
-
-          currentMinutes += travelTime;
-          const arrivalTime = `${Math.floor(currentMinutes / 60)
-            .toString()
-            .padStart(2, "0")}:${(currentMinutes % 60)
-            .toString()
-            .padStart(2, "0")}`;
-
-          const jobDuration = 120; // Default 2 hours
-          const departureTime = `${Math.floor(
-            (currentMinutes + jobDuration) / 60
-          )
-            .toString()
-            .padStart(2, "0")}:${((currentMinutes + jobDuration) % 60)
-            .toString()
-            .padStart(2, "0")}`;
-
-          currentMinutes += jobDuration;
+          const travelTime = Math.ceil((leg.duration?.value || 0) / 60);
+          const distance = leg.distance?.value || 0;
 
           return {
             id: job.id.toString(),
@@ -2542,52 +2517,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
             address: job.Site_Location,
             latitude: job.latitude,
             longitude: job.longitude,
-            duration: jobDuration,
+            duration: 120, // 2 hours per job
             priority: job.Priority?.toLowerCase() || "normal",
-            arrivalTime,
-            departureTime,
+            arrivalTime: "--:--", // Not calculating times
+            departureTime: "--:--", // Not calculating times
             order: index + 1,
             travelTimeFromPrevious: travelTime,
             distanceFromPrevious: distance,
           };
         });
 
-        // Calculate totals
+        // Calculate total distance only
         const totalDistance = legs.reduce(
           (sum: number, leg: any) => sum + (leg.distance?.value || 0),
           0
         );
-        const totalTravelTime = legs.reduce(
-          (sum: number, leg: any) =>
-            sum + Math.ceil((leg.duration?.value || 0) / 60),
-          0
-        );
-        const totalJobTime = optimizedJobs.length * 120; // 2 hours per job
-        const totalTime = totalTravelTime + totalJobTime;
-
-        const estimatedFinishMinutes = startHour * 60 + startMinute + totalTime;
-        const estimatedFinish = `${Math.floor(estimatedFinishMinutes / 60)
-          .toString()
-          .padStart(2, "0")}:${(estimatedFinishMinutes % 60)
-          .toString()
-          .padStart(2, "0")}`;
 
         console.log(
-          `✅ Route optimized: ${optimizedJobs.length} stops, ${(
+          `✅ Route calculated: ${optimizedJobs.length} stops, ${(
             totalDistance / 1000
-          ).toFixed(1)}km, finish at ${estimatedFinish}`
+          ).toFixed(1)}km total`
         );
 
         res.json({
           optimizedJobs,
           totalDistance,
-          totalTime,
-          estimatedFinish,
+          totalTime: 0, // Not calculating
+          estimatedFinish: "--:--", // Not calculating
           polyline: route.overview_polyline?.points,
         });
       } catch (err) {
         console.error("Error in /api/routes/optimize:", err);
-        res.status(500).json({ error: "Route optimization failed" });
+        res.status(500).json({ error: "Route calculation failed" });
       }
     }
   );
@@ -2600,15 +2561,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requireAdminAuth,
     async (req: AdminRequest, res) => {
       try {
-        const { engineer_id, date, jobs, total_distance, total_time } =
-          req.body;
+        const { engineer_id, date, jobs, total_distance } = req.body;
+
+        console.log('entinner id ', date, jobs, total_distance,)
 
         if (!engineer_id || !jobs || jobs.length === 0) {
           return res.status(400).json({
             error: "engineer_id and jobs are required",
           });
         }
-
         // Fetch engineer details
         const { data: engineer, error: engineerError } = await supabase
           .from("engineers")
@@ -2619,6 +2580,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (engineerError || !engineer) {
           return res.status(404).json({ error: "Engineer not found" });
         }
+
+        console.log('Engineer found:', engineer);
 
         const assignedJobs = [];
         const errors = [];
@@ -2643,10 +2606,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               continue;
             }
 
-            // Create scheduled time from date and arrival time
-            const scheduledDateTime = new Date(
-              `${date}T${job.arrival_time}:00`
-            );
+
+            console.log('how many custoer data ', customer)
+            // SIMPLE: Use the route date without specific time
+            // Or use engineer's start time as default
+            const scheduledDateTime = new Date(date);
+            scheduledDateTime.setHours(8, 0, 0, 0); // Default to 8:00 AM
 
             // Insert into jobs table
             const { data: newJob, error: jobError } = await supabase
@@ -2666,9 +2631,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 System_Details: customer.System_Details || "N/A",
                 schedule_time: scheduledDateTime.toISOString(),
                 job_status: "Assigned",
+                job_order: job.order || 0, // Store the order
               })
               .select()
               .single();
+
+            console.log('created jobs are  🔥🔥🔥🔥🔥🔥🔥', newJob)
 
             if (jobError) {
               errors.push({ customer_id: customerId, error: jobError.message });
@@ -2693,6 +2661,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
 
             assignedJobs.push(newJob);
+
+            console.log('assing jobs lentght', assignedJobs.length)
           } catch (err) {
             console.error(`Error assigning job ${job.customer_id}:`, err);
             errors.push({
