@@ -795,6 +795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .from("customers")
           .select("*", { count: "exact" });
 
+        console.log('cutomer qyert', customersQuery)
         // Apply search filter if provided
         if (search) {
           customersQuery = customersQuery.or(
@@ -2301,6 +2302,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .order("Priority", { ascending: true })
           .order("scheduled_time", { ascending: true });
 
+
+        console.log('quert ib the server ', query)
         // Filter by date if provided
         if (date) {
           const startOfDay = new Date(date as string);
@@ -2319,6 +2322,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const { data: customers, error } = await query;
+
 
         if (error) {
           console.error("Error fetching unscheduled jobs:", error);
@@ -2556,140 +2560,172 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /* ===========================
      ASSIGN OPTIMIZED ROUTE TO ENGINEER - ADMIN ONLY
   ============================*/
-  app.post(
-    "/api/routes/assign",
-    requireAdminAuth,
-    async (req: AdminRequest, res) => {
-      try {
-        const { engineer_id, date, jobs, total_distance } = req.body;
+  app.post("/api/routes/assign", requireAdminAuth, async (req, res) => {
+    try {
+      const { engineer_id, date, jobs, total_distance, polyline } = req.body;
 
-        console.log('entinner id ', date, jobs, total_distance,)
+      console.log('=== DEBUG: Full request body ===');
+      console.log('engineer_id:', engineer_id);
+      console.log('date:', date);
+      console.log('total_distance:', total_distance);
+      console.log('has_polyline:', !!polyline);
+      console.log('jobs array:', JSON.stringify(jobs, null, 2));
+      console.log('===============================');
 
-        if (!engineer_id || !jobs || jobs.length === 0) {
-          return res.status(400).json({
-            error: "engineer_id and jobs are required",
+      // 1. VALIDATE
+      if (!engineer_id || !jobs || jobs.length === 0) {
+        return res.status(400).json({ error: "Engineer and jobs are required" });
+      }
+
+      // 2. CHECK ENGINEER
+      const { data: engineer } = await supabase
+        .from("engineers")
+        .select("eng_name")
+        .eq("id", engineer_id)
+        .single();
+
+      if (!engineer) {
+        return res.status(404).json({ error: "Engineer not found" });
+      }
+
+      console.log('Engineer:', engineer.eng_name);
+
+      // 3. CREATE ROUTE
+      const { data: route, error: routeError } = await supabase
+        .from("routes")
+        .insert({
+          engineer_id,
+          date,
+          jobs, // Store jobs as JSON
+          total_distance,
+          polyline,
+          status: 'scheduled'
+        })
+        .select()
+        .single();
+
+      if (routeError) {
+        console.error("Route creation error:", routeError);
+        return res.status(500).json({ error: "Failed to create route" });
+      }
+
+      console.log('✅ Route created:', route.id);
+
+      // 4. CREATE JOBS - USING EXACT COLUMN NAMES FROM YOUR TABLE
+      const assignedJobs = [];
+      const errors = [];
+
+      for (const routeJob of jobs) {
+        try {
+          const customerId = parseInt(routeJob.customer_id);
+          console.log(`Processing customer ID: ${customerId}`);
+
+          // Fetch customer
+          const { data: customer } = await supabase
+            .from("customers")
+            .select("*")
+            .eq("id", customerId)
+            .single();
+
+          if (!customer) {
+            console.log(`❌ Customer not found: ${customerId}`);
+            errors.push({
+              customer_id: customerId,
+              error: "Customer not found"
+            });
+            continue;
+          }
+
+          console.log(`✅ Found customer: ${customer.Business_Name}`);
+
+          // Create scheduled time
+          const scheduledDateTime = new Date(date);
+          scheduledDateTime.setHours(8, 0, 0, 0);
+
+          // CREATE JOB RECORD - EXACT COLUMN NAMES FROM YOUR TABLE
+          const { data: newJob, error: jobError } = await supabase
+            .from("jobs")
+            .insert({
+              customer_id: customerId,
+              engineer_uuid: engineer_id,
+              engineer_name: engineer.eng_name,
+              description: customer.Description_of_Fault || "Assigned job",
+              site_location: customer.Site_Location,
+              customer_latitude: customer.latitude || 0,
+              customer_longitude: customer.longitude || 0,
+              site_contact_naame: customer.Site_Contact_Name, // ← EXACT NAME
+              site_contact_number: customer.Site_Contact_Number,
+              open_time: customer.Opening_Hours || "N/A",
+              business_name: customer.Business_Name,
+              System_Details: customer.System_Details || "N/A",
+              schedule_time: scheduledDateTime.toISOString(),
+              job_status: "Assigned",
+              route_id: route.id,
+              route_order: routeJob.order || 0
+              // Note: Not including invoice_url, job_desc, product_names, image_urls, notes
+              // as they might not be required for initial job creation
+            })
+            .select()
+            .single();
+
+          if (jobError) {
+            console.error(`❌ Job creation error for customer ${customerId}:`, jobError);
+            errors.push({
+              customer_id: customerId,
+              error: jobError.message
+            });
+            continue;
+          }
+
+          console.log(`✅ Job created: ${newJob.id}`);
+
+          // Update customer status
+          const { error: customerUpdateError } = await supabase
+            .from("customers")
+            .update({
+              status: "assigned",
+              assigned_engineer: engineer_id,
+              scheduled_time: scheduledDateTime.toISOString(),
+            })
+            .eq("id", customerId);
+
+          if (customerUpdateError) {
+            console.error(`⚠️ Failed to update customer ${customerId}:`, customerUpdateError);
+          } else {
+            console.log(`✅ Customer ${customerId} updated to assigned`);
+          }
+
+          assignedJobs.push(newJob);
+
+        } catch (err) {
+          console.error(`❌ Error processing job ${routeJob.customer_id}:`, err);
+          errors.push({
+            customer_id: routeJob.customer_id,
+            error: err instanceof Error ? err.message : "Unknown error",
           });
         }
-        // Fetch engineer details
-        const { data: engineer, error: engineerError } = await supabase
-          .from("engineers")
-          .select("eng_name")
-          .eq("id", engineer_id)
-          .single();
-
-        if (engineerError || !engineer) {
-          return res.status(404).json({ error: "Engineer not found" });
-        }
-
-        console.log('Engineer found:', engineer);
-
-        const assignedJobs = [];
-        const errors = [];
-
-        // Process each job in the route
-        for (const job of jobs) {
-          try {
-            const customerId = parseInt(job.customer_id || job.id);
-
-            // Fetch customer details
-            const { data: customer, error: customerError } = await supabase
-              .from("customers")
-              .select("*")
-              .eq("id", customerId)
-              .single();
-
-            if (customerError || !customer) {
-              errors.push({
-                customer_id: customerId,
-                error: "Customer not found",
-              });
-              continue;
-            }
-
-
-            console.log('how many custoer data ', customer)
-            // SIMPLE: Use the route date without specific time
-            // Or use engineer's start time as default
-            const scheduledDateTime = new Date(date);
-            scheduledDateTime.setHours(8, 0, 0, 0); // Default to 8:00 AM
-
-            // Insert into jobs table
-            const { data: newJob, error: jobError } = await supabase
-              .from("jobs")
-              .insert({
-                customer_id: customerId,
-                engineer_uuid: engineer_id,
-                engineer_name: engineer.eng_name,
-                description: customer.Description_of_Fault || "Assigned job",
-                site_location: customer.Site_Location,
-                customer_latitude: customer.latitude || 0,
-                customer_longitude: customer.longitude || 0,
-                site_contact_naame: customer.Site_Contact_Name,
-                site_contact_number: customer.Site_Contact_Number,
-                open_time: customer.Opening_Hours || "N/A",
-                business_name: customer.Business_Name,
-                System_Details: customer.System_Details || "N/A",
-                schedule_time: scheduledDateTime.toISOString(),
-                job_status: "Assigned",
-                job_order: job.order || 0, // Store the order
-              })
-              .select()
-              .single();
-
-            console.log('created jobs are  🔥🔥🔥🔥🔥🔥🔥', newJob)
-
-            if (jobError) {
-              errors.push({ customer_id: customerId, error: jobError.message });
-              continue;
-            }
-
-            // Update customer status
-            const { error: customerUpdateError } = await supabase
-              .from("customers")
-              .update({
-                status: "assigned",
-                assigned_engineer: engineer_id,
-                scheduled_time: scheduledDateTime.toISOString(),
-              })
-              .eq("id", customerId);
-
-            if (customerUpdateError) {
-              console.error(
-                `Failed to update customer ${customerId}:`,
-                customerUpdateError
-              );
-            }
-
-            assignedJobs.push(newJob);
-
-            console.log('assing jobs lentght', assignedJobs.length)
-          } catch (err) {
-            console.error(`Error assigning job ${job.customer_id}:`, err);
-            errors.push({
-              customer_id: job.customer_id,
-              error: err instanceof Error ? err.message : "Unknown error",
-            });
-          }
-        }
-
-        console.log(
-          `✅ Route assigned: ${assignedJobs.length} jobs assigned to ${engineer.eng_name}`
-        );
-
-        res.json({
-          success: true,
-          jobs_assigned: assignedJobs.length,
-          total_jobs: jobs.length,
-          assigned_jobs: assignedJobs,
-          errors: errors.length > 0 ? errors : undefined,
-        });
-      } catch (err) {
-        console.error("Error in /api/routes/assign:", err);
-        res.status(500).json({ error: "Route assignment failed" });
       }
-    }
-  );
 
+      // 5. RETURN RESPONSE
+      console.log(`✅ Route assignment complete: ${assignedJobs.length} jobs created`);
+
+      res.json({
+        success: true,
+        route_id: route.id,
+        jobs_assigned: assignedJobs.length,
+        assigned_jobs: assignedJobs,
+        errors: errors.length > 0 ? errors : undefined,
+        message: `${assignedJobs.length} jobs assigned to ${engineer.eng_name}`
+      });
+
+    } catch (err) {
+      console.error("❌ Error in /api/routes/assign:", err);
+      res.status(500).json({
+        error: "Route assignment failed",
+        details: err instanceof Error ? err.message : "Unknown error"
+      });
+    }
+  });
   /* ===========================
      UPDATE ENGINEER LOCATION - ENGINEER AUTH REQUIRED
      Updates engineer's latitude and longitude in the database
