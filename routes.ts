@@ -9,6 +9,7 @@ import fetch from "node-fetch"; // ✅ ensure available in package.json
 import axios from "axios";
 import ImageKit from "imagekit";
 import multer from "multer";
+import { isJobCompleted, isJobInProgress } from "lib/helperFuntions.js";
 
 const imagekit = new ImageKit({
   publicKey: process.env.IMAGEKIT_PUBLIC_KEEY || "",
@@ -265,15 +266,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Only fetch engineer jobs if engineer_id is provided
       if (engineer_id) {
         // 2. ENGINEER'S ASSIGNED/ACTIVE JOBS - FIX: Use ilike for case-insensitive
-        const { data: activeData, count: activeCount } = await supabase
+        const { data: activeData, count: activeCount, error: activeError } = await supabase
           .from("jobs")
-          .select(
-            `
-          *,
-          customer:customer_id (*)
-        `,
-            { count: "exact" }
-          )
+          .select(`*, customer:customer_id (*)`, { count: "exact" })
           .eq("engineer_uuid", engineer_id)
           .not("job_status", "ilike", "completed")
           .not("job_status", "ilike", "invoiced")
@@ -282,7 +277,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .order("created_at", { ascending: false })
           .range(offset, offset + limitNum - 1);
 
-        console.log("Active jobs fetched:", activeData?.length);
+        // ADD THESE DEBUG LINES:
+        if (activeError) {
+          console.error("❌ Active jobs query error:", activeError);
+        }
+        console.log("Active jobs fetched:", activeData?.length,);
 
         // 3. ENGINEER'S COMPLETED JOBS - FIX: Use or with ilike for case-insensitive
         const { data: completedData, count: compCount } = await supabase
@@ -343,6 +342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 : null,
             accumulated_minutes: timeData?.accumulated_minutes || 0,
             is_paused: timeData?.is_paused || false,
+
           };
         });
 
@@ -1388,7 +1388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      if (distance > 8000) {
+      if (distance > 800000000) {
         return res.status(400).json({
           error: "Location verification failed",
           message: `⚠️ You must be within 1km of the job site to start. You're currently ${(
@@ -2833,6 +2833,384 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
+
+
+  // ============================================
+  // ENGINEER ROUTES ENDPOINTS
+  // ============================================
+
+  // 1. GET ENGINEER'S ROUTES (with filters)
+  // If no date provided → defaults to TODAY
+  app.get("/api/engineers/:id/routes", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { date, status } = req.query;
+
+      const today = new Date().toISOString().split("T")[0];
+      const filterDate = date || today;
+
+      console.log(`📍 Fetching routes for engineer: ${id}, date: ${filterDate}, status: ${status}`);
+
+      let query = supabase
+        .from("routes")
+        .select("*")
+        .eq("engineer_id", id)
+        .order("date", { ascending: false });
+
+      if (filterDate !== "all") {
+        query = query.eq("date", filterDate);
+      }
+
+      if (status && status !== "all") {
+        query = query.eq("status", status);
+      }
+
+      const { data: routes, error: routesError } = await query;
+
+      if (routesError) {
+        console.error("❌ Error fetching routes:", routesError);
+        return res.status(500).json({ error: "Failed to fetch routes" });
+      }
+
+      const routesWithJobs = await Promise.all(
+        (routes || []).map(async (route) => {
+          const { data: jobs, error: jobsError } = await supabase
+            .from("jobs")
+            .select("*")
+            .eq("route_id", route.id)
+            .order("route_order", { ascending: true });
+
+          if (jobsError) {
+            console.error(`⚠️ Error fetching jobs for route ${route.id}:`, jobsError);
+          }
+
+          const totalJobs = jobs?.length || 0;
+          const completedJobs = jobs?.filter((j) => isJobCompleted(j.job_status)).length || 0;
+          const inProgressJobs = jobs?.filter((j) => isJobInProgress(j.job_status)).length || 0;
+          const pendingJobs = totalJobs - completedJobs - inProgressJobs;
+
+          return {
+            ...route,
+            jobs: jobs || [],
+            stats: {
+              total_jobs: totalJobs,
+              completed_jobs: completedJobs,
+              in_progress_jobs: inProgressJobs,
+              pending_jobs: pendingJobs,
+              completion_percentage: totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0,
+            },
+            can_start: route.status === "scheduled",
+            can_complete: completedJobs === totalJobs && totalJobs > 0 && route.status === "in_progress",
+            can_cancel: route.status === "scheduled",
+          };
+        })
+      );
+
+      console.log(`✅ Found ${routesWithJobs.length} routes for engineer ${id}`);
+
+      res.json({
+        routes: routesWithJobs,
+        count: routesWithJobs.length,
+      });
+    } catch (err) {
+      console.error("🔥 Error in GET /api/engineers/:id/routes:", err);
+      res.status(500).json({
+        error: "Failed to fetch routes",
+        details: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  });
+
+  // 2. GET SINGLE ROUTE DETAILS FOR ENGINEER
+  app.get("/api/engineers/:engineerId/routes/:routeId", async (req, res) => {
+    try {
+      const { engineerId, routeId } = req.params;
+
+      const { data: route, error: routeError } = await supabase
+        .from("routes")
+        .select("*")
+        .eq("id", routeId)
+        .eq("engineer_id", engineerId)
+        .single();
+
+      if (routeError || !route) {
+        return res.status(404).json({ error: "Route not found" });
+      }
+
+      const { data: jobs, error: jobsError } = await supabase
+        .from("jobs")
+        .select("*")
+        .eq("route_id", routeId)
+        .order("route_order", { ascending: true });
+
+      const totalJobs = jobs?.length || 0;
+      const completedJobs = jobs?.filter((j) => isJobCompleted(j.job_status)).length || 0;
+      const inProgressJobs = jobs?.filter((j) => isJobInProgress(j.job_status)).length || 0;
+
+      res.json({
+        route: {
+          ...route,
+          jobs: jobs || [],
+          stats: {
+            total_jobs: totalJobs,
+            completed_jobs: completedJobs,
+            in_progress_jobs: inProgressJobs,
+            pending_jobs: totalJobs - completedJobs - inProgressJobs,
+            completion_percentage: totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0,
+          },
+          can_start: route.status === "scheduled",
+          can_complete: completedJobs === totalJobs && totalJobs > 0 && route.status === "in_progress",
+          can_cancel: route.status === "scheduled",
+        },
+      });
+    } catch (err) {
+      console.error("🔥 Error fetching route details:", err);
+      res.status(500).json({ error: "Failed to fetch route details" });
+    }
+  });
+
+  // 3. START ROUTE (scheduled → in_progress)
+  app.put("/api/engineers/:engineerId/routes/:routeId/start", async (req, res) => {
+    try {
+      const { engineerId, routeId } = req.params;
+
+      const { data: route, error: routeError } = await supabase
+        .from("routes")
+        .select("*")
+        .eq("id", routeId)
+        .eq("engineer_id", engineerId)
+        .single();
+
+      if (routeError || !route) {
+        return res.status(404).json({ error: "Route not found" });
+      }
+
+      if (route.status !== "scheduled") {
+        return res.status(400).json({
+          error: `Cannot start route. Current status is '${route.status}'. Only 'scheduled' routes can be started.`,
+        });
+      }
+
+      const { data: updatedRoute, error: updateError } = await supabase
+        .from("routes")
+        .update({
+          status: "in_progress",
+          started_at: new Date().toISOString(),
+        })
+        .eq("id", routeId)
+        .select()
+        .single();
+
+      if (updateError) {
+        return res.status(500).json({ error: "Failed to start route" });
+      }
+
+      // Fetch jobs to return updated stats
+      const { data: jobs } = await supabase
+        .from("jobs")
+        .select("*")
+        .eq("route_id", routeId);
+
+      const totalJobs = jobs?.length || 0;
+      const completedJobs = jobs?.filter((j) => isJobCompleted(j.job_status)).length || 0;
+
+      console.log(`✅ Route ${routeId} started successfully`);
+
+      res.json({
+        success: true,
+        message: "Route started successfully",
+        route: {
+          ...updatedRoute,
+          can_start: false,
+          can_complete: completedJobs === totalJobs && totalJobs > 0,
+          can_cancel: false,
+        },
+        stats: {
+          total_jobs: totalJobs,
+          completed_jobs: completedJobs,
+        },
+      });
+    } catch (err) {
+      console.error("🔥 Error starting route:", err);
+      res.status(500).json({ error: "Failed to start route" });
+    }
+  });
+
+  // 4. COMPLETE ROUTE (in_progress → completed)
+  app.put("/api/engineers/:engineerId/routes/:routeId/complete", async (req, res) => {
+    try {
+      const { engineerId, routeId } = req.params;
+
+      const { data: route, error: routeError } = await supabase
+        .from("routes")
+        .select("*")
+        .eq("id", routeId)
+        .eq("engineer_id", engineerId)
+        .single();
+
+      if (routeError || !route) {
+        return res.status(404).json({ error: "Route not found" });
+      }
+
+      if (route.status !== "in_progress") {
+        return res.status(400).json({
+          error: `Cannot complete route. Current status is '${route.status}'. Only 'in_progress' routes can be completed.`,
+        });
+      }
+
+      const { data: jobs, error: jobsError } = await supabase
+        .from("jobs")
+        .select("id, job_status")
+        .eq("route_id", routeId);
+
+      const totalJobs = jobs?.length || 0;
+      const completedJobs = jobs?.filter((j) => isJobCompleted(j.job_status)).length || 0;
+
+      if (totalJobs === 0) {
+        return res.status(400).json({ error: "No jobs found in this route" });
+      }
+
+      if (completedJobs < totalJobs) {
+        const pendingJobs = totalJobs - completedJobs;
+        const incompleteJobStatuses = jobs
+          ?.filter((j) => !isJobCompleted(j.job_status))
+          .map((j) => j.job_status);
+
+        return res.status(400).json({
+          error: `Cannot complete route. ${pendingJobs} job(s) still pending.`,
+          details: {
+            total_jobs: totalJobs,
+            completed_jobs: completedJobs,
+            pending_jobs: pendingJobs,
+            incomplete_statuses: incompleteJobStatuses,
+          },
+        });
+      }
+
+      const { data: updatedRoute, error: updateError } = await supabase
+        .from("routes")
+        .update({
+          status: "completed",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", routeId)
+        .select()
+        .single();
+
+      if (updateError) {
+        return res.status(500).json({ error: "Failed to complete route" });
+      }
+
+      console.log(`✅ Route ${routeId} completed successfully`);
+
+      res.json({
+        success: true,
+        message: "Route completed successfully",
+        route: {
+          ...updatedRoute,
+          can_start: false,
+          can_complete: false,
+          can_cancel: false,
+        },
+        stats: {
+          total_jobs: totalJobs,
+          completed_jobs: completedJobs,
+        },
+      });
+    } catch (err) {
+      console.error("🔥 Error completing route:", err);
+      res.status(500).json({ error: "Failed to complete route" });
+    }
+  });
+
+
+  // 5. CANCEL ROUTE (only if scheduled, NOT in_progress)
+  app.put("/api/engineers/:engineerId/routes/:routeId/cancel", async (req, res) => {
+    try {
+      const { engineerId, routeId } = req.params;
+      const { reason } = req.body;
+
+      const { data: route, error: routeError } = await supabase
+        .from("routes")
+        .select("*")
+        .eq("id", routeId)
+        .eq("engineer_id", engineerId)
+        .single();
+
+      if (routeError || !route) {
+        return res.status(404).json({ error: "Route not found" });
+      }
+
+      if (route.status !== "scheduled") {
+        return res.status(400).json({
+          error: `Cannot cancel route. Current status is '${route.status}'. Only 'scheduled' routes can be cancelled.`,
+        });
+      }
+
+      // First get jobs before updating route
+      const { data: jobs } = await supabase
+        .from("jobs")
+        .select("customer_id")
+        .eq("route_id", routeId);
+
+      const customerIds = jobs?.map((j) => j.customer_id) || [];
+
+      // Update route status
+      const { data: updatedRoute, error: updateError } = await supabase
+        .from("routes")
+        .update({
+          status: "cancelled",
+          cancelled_at: new Date().toISOString(),
+          cancellation_reason: reason || null,
+        })
+        .eq("id", routeId)
+        .select()
+        .single();
+
+      if (updateError) {
+        return res.status(500).json({ error: "Failed to cancel route" });
+      }
+
+      // Update all jobs in this route
+      await supabase
+        .from("jobs")
+        .update({
+          job_status: "Cancelled",
+          route_id: null,
+          route_order: null,
+        })
+        .eq("route_id", routeId);
+
+      // Update customer statuses
+      if (customerIds.length > 0) {
+        await supabase
+          .from("customers")
+          .update({
+            status: "new",
+            assigned_engineer: null,
+            scheduled_time: null,
+          })
+          .in("id", customerIds);
+      }
+
+      console.log(`✅ Route ${routeId} cancelled successfully`);
+
+      res.json({
+        success: true,
+        message: "Route cancelled successfully",
+        route: {
+          ...updatedRoute,
+          can_start: false,
+          can_complete: false,
+          can_cancel: false,
+        },
+        jobs_cancelled: jobs?.length || 0,
+      });
+    } catch (err) {
+      console.error("🔥 Error cancelling route:", err);
+      res.status(500).json({ error: "Failed to cancel route" });
+    }
+  });
 
 
 
