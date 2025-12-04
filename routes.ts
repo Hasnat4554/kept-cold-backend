@@ -2562,15 +2562,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ============================*/
   app.post("/api/routes/assign", requireAdminAuth, async (req, res) => {
     try {
-      const { engineer_id, date, jobs, total_distance, polyline } = req.body;
+      const { engineer_id, date, jobs, total_distance, polyLine } = req.body;
 
       console.log('=== DEBUG: Full request body ===');
       console.log('engineer_id:', engineer_id);
       console.log('date:', date);
       console.log('total_distance:', total_distance);
-      console.log('has_polyline:', !!polyline);
+      console.log('has_polyline:', !!polyLine);
       console.log('jobs array:', JSON.stringify(jobs, null, 2));
       console.log('===============================');
+
 
       // 1. VALIDATE
       if (!engineer_id || !jobs || jobs.length === 0) {
@@ -2598,7 +2599,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           date,
           jobs, // Store jobs as JSON
           total_distance,
-          polyline,
+          polyline: polyLine,
           status: 'scheduled'
         })
         .select()
@@ -2726,6 +2727,119 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+
+
+  app.get("/api/routes", requireAdminAuth, async (req: AdminRequest, res) => {
+    try {
+      const { date } = req.query;
+
+      let query = supabase
+        .from("routes")
+        .select(`
+        *,
+        engineer:engineers (
+          eng_name,
+          area,
+          speciality
+        )
+      `)
+        .order("date", { ascending: true });
+
+      // Filter by date if provided
+      if (date) {
+        query = query.eq("date", date);
+      }
+
+      const { data: routes, error } = await query;
+
+      if (error) {
+        console.error("Error fetching routes:", error);
+        return res.status(500).json({ error: "Failed to fetch routes" });
+      }
+
+      res.json({ routes });
+
+    } catch (err) {
+      console.error("Error in /api/routes:", err);
+      res.status(500).json({ error: "Failed to fetch routes" });
+    }
+  });
+
+
+  // Add to backend
+  // Update this endpoint in your index.ts
+  app.get("/api/routes/:id", requireAdminAuth, async (req: AdminRequest, res) => {
+    try {
+      const { id } = req.params;
+
+      console.log('🚀 Fetching route details for ID:', id);
+
+      // 1. Get the route
+      const { data: route, error: routeError } = await supabase
+        .from("routes")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (routeError || !route) {
+        console.error("❌ Route not found:", routeError);
+        return res.status(404).json({ error: "Route not found" });
+      }
+
+      console.log('✅ Route found:', route.id, 'for engineer:', route.engineer_id);
+
+      // 2. Get engineer details
+      const { data: engineer, error: engineerError } = await supabase
+        .from("engineers")
+        .select("id, eng_name, area, speciality, work_start_time, work_end_time, latitude, longitude")
+        .eq("id", route.engineer_id)
+        .single();
+
+      if (engineerError) {
+        console.error("⚠️ Engineer fetch error:", engineerError);
+      }
+
+      console.log('✅ Engineer found:', engineer?.eng_name);
+
+      // 3. Get jobs for this route
+      const { data: jobs, error: jobsError } = await supabase
+        .from("jobs")
+        .select("*")
+        .eq("route_id", id)
+        .order("route_order", { ascending: true });
+
+      if (jobsError) {
+        console.error("⚠️ Jobs fetch error:", jobsError);
+      }
+
+      console.log(`✅ Found ${jobs?.length || 0} jobs for route`);
+
+      // 4. Return everything
+      res.json({
+        route: {
+          ...route,
+          engineer: engineer || null
+        },
+        jobs: jobs || []
+      });
+
+    } catch (err) {
+      console.error("🔥 Error in /api/routes/:id:", err);
+      res.status(500).json({
+        error: "Failed to fetch route details",
+        details: err instanceof Error ? err.message : "Unknown error"
+      });
+    }
+  });
+
+
+
+
+
+
+
+
+
   /* ===========================
      UPDATE ENGINEER LOCATION - ENGINEER AUTH REQUIRED
      Updates engineer's latitude and longitude in the database
@@ -2779,6 +2893,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to update engineer location" });
     }
   });
+
+
+
+
+
+
+
+
 
   ///////////////////////////=====================================serever is runnning check api
   app.get("/health", (req, res) => {
