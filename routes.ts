@@ -782,50 +782,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
           search = "",
           status = "",
           dateFrom = "",
-          excludeStatus = "", // New parameter
+          excludeStatus = "",
           dateTo = "",
         } = req.query;
 
+        // Cast query params to strings
         const pageNum = parseInt(page as string);
         const limitNum = parseInt(limit as string);
         const offset = (pageNum - 1) * limitNum;
+        const searchStr = String(search || "");
+        const statusStr = String(status || "");
+        const excludeStatusStr = String(excludeStatus || "");
+        const dateFromStr = String(dateFrom || "");
+        const dateToStr = String(dateTo || "");
+        const engineerIdStr = engineer_id ? String(engineer_id) : null;
 
         // Build the base query
         let customersQuery = supabase
           .from("customers")
           .select("*", { count: "exact" });
 
-        console.log('cutomer qyert', customersQuery)
         // Apply search filter if provided
-        if (search) {
+        if (searchStr) {
           customersQuery = customersQuery.or(
-            `Business_Name.ilike.%${search}%,Site_Location.ilike.%${search}%,id.eq.${isNaN(Number(search)) ? 0 : search
+            `Business_Name.ilike.%${searchStr}%,Site_Location.ilike.%${searchStr}%,id.eq.${isNaN(Number(searchStr)) ? 0 : searchStr
             }`
           );
         }
 
-        // Apply status filter if provided
-        if (status) {
-          customersQuery = customersQuery.eq("status", status);
+        // Apply status filter if provided (case-insensitive)
+        if (statusStr && statusStr !== "all") {
+          customersQuery = customersQuery.ilike("status", statusStr);
         }
-        console.log("Exclude Status:", excludeStatus);
 
-        if (excludeStatus) {
-          const excludeStatusString = String(excludeStatus);
-          const statusesToExclude = excludeStatusString.split(",");
+        console.log("Exclude Status:", excludeStatusStr);
+
+        // Exclude statuses if provided
+        if (excludeStatusStr) {
+          const statusesToExclude = excludeStatusStr.split(",");
           statusesToExclude.forEach((s: string) => {
-            customersQuery = customersQuery.neq("status", s.trim());
+            customersQuery = customersQuery.neq("status", s.trim().toLowerCase());
           });
         }
 
         // Apply date filters if provided
-        if (dateFrom || dateTo) {
-          if (dateFrom) {
-            customersQuery = customersQuery.gte("created_at", dateFrom);
-          }
-          if (dateTo) {
-            customersQuery = customersQuery.lte("created_at", dateTo);
-          }
+        if (dateFromStr) {
+          customersQuery = customersQuery.gte("created_at", dateFromStr);
+        }
+        if (dateToStr) {
+          customersQuery = customersQuery.lte("created_at", dateToStr);
         }
 
         // Get total count first
@@ -850,7 +855,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (timeErr) console.error("Error fetching time tracking:", timeErr);
 
         // Map customers to jobs
-        const jobsWithCustomers = customers.map((c) => {
+        const jobsWithCustomers = customers?.map((c) => {
           const assigned = jobs?.find((j) => j.customer_id === c.id);
           const timeEntry = timeTracking?.find(
             (t) => t.job_id === assigned?.id
@@ -864,11 +869,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             engineer_uuid: assigned?.engineer_uuid || null,
             engineer_name: assigned?.engineer_name || null,
           };
-        });
+        }) || [];
 
         // Filter by engineer if specified
-        const result = engineer_id
-          ? jobsWithCustomers.filter((j) => j.engineer_uuid === engineer_id)
+        const result = engineerIdStr
+          ? jobsWithCustomers.filter((j) => j.engineer_uuid === engineerIdStr)
           : jobsWithCustomers;
 
         // Calculate pagination metadata
@@ -877,6 +882,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(
           `Fetched ${result.length} jobs (Page ${pageNum} of ${totalPages})`
         );
+
         res.json({
           data: result,
           pagination: {
@@ -894,7 +900,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
   );
-
   /* ===========================
      DELETE JOB (ADMIN ONLY)
   ============================*/
@@ -1399,17 +1404,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Time verification
-      if (locationData.Opening_Hours) {
-        const withinHours = isWithinOpeningHours(locationData.Opening_Hours);
-        if (!withinHours) {
-          return res.status(400).json({
-            error: "Time verification failed",
-            message: `This job should be started during customer's opening hours: ${locationData.Opening_Hours}`,
-            opening_hours: locationData.Opening_Hours,
-          });
-        }
-      }
+      // // Time verification
+      // if (locationData.Opening_Hours) {
+      //   const withinHours = isWithinOpeningHours(locationData.Opening_Hours);
+      //   if (!withinHours) {
+      //     return res.status(400).json({
+      //       error: "Time verification failed",
+      //       message: `This job should be started during customer's opening hours: ${locationData.Opening_Hours}`,
+      //       opening_hours: locationData.Opening_Hours,
+      //     });
+      //   }
+      // }
 
       const startTime = new Date().toISOString();
 
@@ -1651,6 +1656,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         manual_duration_minutes = null,
         time_adjustment_minutes = 0,
         adjustment_reason = "",
+        // NEW fields for service report
+        arrival_time = null,
+        departure_time = null,
+        customer_name = null,
+        engineer_notes = null,
+        parts_used = null,
       } = req.body;
 
       if (!job_id || !engineer_id) {
@@ -1714,8 +1725,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Update the time tracking row with final data INCLUDING calculation method and reason
-      await supabase
+      // Parse arrival/departure times to full timestamps
+      let arrivalTimestamp = null;
+      let departureTimestamp = null;
+
+      if (arrival_time) {
+        // Get today's date and combine with the time
+        const today = new Date().toISOString().split("T")[0];
+        arrivalTimestamp = new Date(`${today}T${arrival_time}:00`).toISOString();
+      }
+
+      if (departure_time) {
+        const today = new Date().toISOString().split("T")[0];
+        departureTimestamp = new Date(`${today}T${departure_time}:00`).toISOString();
+      }
+
+      // Update the time tracking row with ALL data including new service report fields
+      const { error: updateError } = await supabase
         .from("time_tracking")
         .update({
           end_time: endTime,
@@ -1725,8 +1751,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           calculation_method: calculationMethod,
           adjustment_reason: finalAdjustmentReason,
           adjustment_minutes: finalAdjustmentMinutes,
+          // NEW service report fields
+          arrival_time: arrivalTimestamp,
+          departure_time: departureTimestamp,
+          customer_name: customer_name || null,
+          engineer_notes: engineer_notes || null,
+          parts_used: parts_used && parts_used.length > 0 ? parts_used : null,
         })
         .eq("id", entry.id);
+
+      if (updateError) {
+        console.error("❌ Error updating time_tracking:", updateError);
+        return res.status(500).json({ error: "Failed to update time tracking" });
+      }
 
       // Handle image (already HTTPS URL)
       const imageUrl = image_data || null;
@@ -1753,7 +1790,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .eq("id", jobData.customer_id);
       }
 
-      // Send webhook with total time and calculation method
+      // Send webhook with ALL data including service report fields
       try {
         await fetch("https://keptcoldhvac.app.n8n.cloud/webhook/end-job", {
           method: "POST",
@@ -1767,11 +1804,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             end_time: endTime,
             image_url: imageUrl,
             products_used: products,
+            // NEW service report fields for n8n
+            arrival_time: arrivalTimestamp,
+            departure_time: departureTimestamp,
+            customer_name: customer_name,
+            engineer_notes: engineer_notes,
+            parts_used: parts_used,
           }),
         });
       } catch (webhookErr) {
         console.error("Webhook error:", webhookErr);
       }
+
+      console.log(`✅ Job ${job_id} completed with service report data`);
 
       res.json({
         success: true,
@@ -1779,6 +1824,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         calculation_method: calculationMethod,
         image_url: imageUrl,
         products_count: products.length,
+        parts_count: parts_used?.length || 0,
+        service_report: {
+          arrival_time: arrivalTimestamp,
+          departure_time: departureTimestamp,
+          customer_name: customer_name,
+          has_notes: !!engineer_notes,
+          parts_count: parts_used?.length || 0,
+        },
       });
     } catch (err) {
       console.error("❌ Error in end-job:", err);
@@ -2831,9 +2884,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
-
-
-
 
   // ============================================
   // ENGINEER ROUTES ENDPOINTS
