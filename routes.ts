@@ -9,7 +9,7 @@ import fetch from "node-fetch"; // ✅ ensure available in package.json
 import axios from "axios";
 import ImageKit from "imagekit";
 import multer from "multer";
-import { isJobCompleted, isJobInProgress } from "lib/helperFuntions.js";
+import { isJobCompleted, isJobInProgress } from "./lib/helperFuntions.js";
 
 const imagekit = new ImageKit({
   publicKey: process.env.IMAGEKIT_PUBLIC_KEEY || "",
