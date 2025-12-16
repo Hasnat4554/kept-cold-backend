@@ -1757,6 +1757,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           customer_name: customer_name || null,
           engineer_notes: engineer_notes || null,
           parts_used: parts_used && parts_used.length > 0 ? parts_used : null,
+          signature_image_url: image_data,
         })
         .eq("id", entry.id);
 
